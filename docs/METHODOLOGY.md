@@ -80,7 +80,7 @@ For sessions with 2 or more clicks, the average time between consecutive clicks 
 
 **Recommended threshold:** Flag multi-click sessions where the average inter-click interval is < 2 seconds. This catches 78.4% of bots with 99.7% precision.
 
-### Combined Signal Performance
+### Combined Click Signal Performance
 
 The individual signals are strong, but combining them covers more of the bot population without sacrificing precision:
 
@@ -89,7 +89,75 @@ The individual signals are strong, but combining them covers more of the bot pop
 | (5+ clicks in 5s) OR (first click < 60s) | 99.999% | 90.5% | 0.01% |
 | Any single rule fires | 99.7%+ | 90%+ | < 1.4% |
 
-## 3. The False Positive vs. False Negative Tradeoff
+## 3. The Complete Click Rule Reference
+
+The SQL model (`/model/bot_b_gone_filter.sql`) applies 7 bot rules and 6 human rules in a priority cascade. Each click session is classified by the first rule that fires.
+
+### Bot Click Rules
+
+| Rule | Code | What It Detects | Confidence |
+|:---|:---|:---|:---|
+| B1 | `click_rule_bot_machinegun_definitive` | 5+ clicks within 5 seconds | Definitive |
+| B2 | `click_rule_bot_machinegun_likely` | 5+ clicks within 10 seconds (but not 5s) | High |
+| B3 | `click_rule_bot_instant_definitive` | First click < 2 seconds after send | Definitive |
+| B4 | `click_rule_bot_instant_likely` | First click 2–60 seconds after send | High |
+| B5 | `click_rule_bot_scanner` | 5+ unique URLs, inter-click 0.5–3s, span < 30s | High |
+| B6 | `click_rule_bot_cron` | 5+ clicks, inter-click 2–10s, first click < 5 min | Medium |
+| B7 | `click_rule_bot_volume` | 10+ total clicks with avg inter-click < 30s | Medium |
+
+### Human Click Rules
+
+| Rule | Code | What It Detects | Confidence |
+|:---|:---|:---|:---|
+| H1 | `click_rule_human_delayed` | Single click, 5 min – 24 hr after send | High |
+| H2 | `click_rule_human_late` | Any click arriving 24+ hours after send | High |
+| H3 | `click_rule_human_moderate` | Single click, 1–5 min after send | Medium |
+| H4 | `click_rule_human_sailthru` | ESP flagged click as "real" / human | High |
+| H5 | `click_rule_human_single` | Exactly 1 click on 1 URL | Medium |
+| H6 | `click_rule_human_thoughtful` | 2+ clicks, avg inter-click 10s+, first click 5 min+ | High |
+
+## 4. Open Classification
+
+Opens are fundamentally harder than clicks because Apple Mail Privacy Protection (MPP) fires a proxy open on nearly every email, making raw unique opens unreliable. Our approach inverts the problem: instead of trying to subtract bots from a noisy total, we look for behavioral evidence that **confirms** a human opened the email.
+
+### Human Open Rules
+
+| Rule | Code | What It Detects | Confidence |
+|:---|:---|:---|:---|
+| OH1 | `open_rule_verified_clicker` | Subscriber had a human-classified click on the same send | Definitive |
+| OH2 | `open_rule_sailthru_real` | ESP flagged the open as "real" | High |
+| OH3 | `open_rule_multi_open` | 2+ opens separated by 5+ minutes | Medium |
+| OH4 | `open_rule_reopen_long_span` | First-to-last open span exceeds 1 hour | Medium |
+| OH5 | `open_rule_apple_mail_double` | Exactly 2 opens, 30s–5 min apart (MPP + real open) | Medium |
+
+### Bot Open Rules
+
+| Rule | Code | What It Detects | Confidence |
+|:---|:---|:---|:---|
+| OB1 | `open_rule_bot_instant` | Single open < 5 seconds after send, no human click | High |
+| OB2 | `open_rule_bot_session` | Open occurred during a bot-classified click session | High |
+| OB3 | `open_rule_bot_never_verified_fast` | Fast single open, no ESP real flag, no human click history | Medium |
+
+### The "Uncertain" Category
+
+If none of the above rules fire, the open is classified as `UNCERTAIN:no_evidence`. This typically means a single open event with no corroborating signal — it *could* be a real human (especially an Apple Mail user), but we cannot confirm it.
+
+The conservative approach (recommended for advertiser-facing metrics) is to exclude uncertain opens. The generous approach (useful for total reach estimates) is to include them. The SQL model provides both:
+* `is_human_open = TRUE` → conservative (only confirmed human opens)
+* `open_probability >= 40` → generous (includes uncertain opens)
+
+## 5. Confidence Scoring & Probability
+
+Every classification carries two additional signals:
+
+**Confidence Level** (`definitive`, `high`, `medium`, `low`): How certain we are about the classification. Use this to tune your filter strictness. For advertiser-facing metrics, you may want to only count `definitive` and `high` confidence human events.
+
+**Probability Score** (0–100): A numeric score where 0 = definitely bot and 100 = definitely human. This allows you to set your own threshold rather than using our binary classification. For example:
+* `probability >= 85` → strict (only high-confidence humans)
+* `probability >= 65` → balanced (includes moderate-confidence humans)
+* `probability >= 40` → generous (includes uncertain events)
+
+## 6. The False Positive vs. False Negative Tradeoff
 
 Every bot-filtering model makes two types of errors:
 * **False Positives (FP):** A bot counted as a real human (inflates your rate).
@@ -99,7 +167,7 @@ As you loosen your filter to capture more humans, you inevitably let in more bot
 
 *(See `/charts/the_tradeoff.png` for the visual curve)*
 
-## 4. The CTOR Math Check
+## 7. The CTOR Math Check
 
 For B2B publishers sending long-form editorial content, the expected Click-to-Open Rate (CTOR) is between **4% and 7%**. 
 
@@ -110,7 +178,7 @@ If your ESP reports a 40% open rate, but your unique click rate is 1%, your impl
 
 If your implied CTOR falls below your format's benchmark, you need to tighten your bot filter.
 
-## 5. The Re-Read Multiplier
+## 8. The Re-Read Multiplier
 
 Because Apple Mail Privacy Protection (MPP) fires a proxy open immediately upon delivery, *unique* opens are fundamentally broken. However, *total* opens still carry massive signal.
 
