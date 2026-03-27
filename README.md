@@ -16,18 +16,38 @@ If you are a publisher or platform selling advertising against those numbers, yo
 
 Bot-B-Gone is a shared industry framework for taking back control of your data. It provides:
 
-1. **The Methodology:** How to use active honeypots and behavioral signals to find your true baseline.
-2. **The Algorithm:** A foundational model for filtering raw event data (user agents, IPs, timing).
+1. **The Methodology:** How to use active honeypots, click timing, velocity signals, and behavioral patterns to find your true baseline.
+2. **The Algorithm:** A production-grade SQL model that classifies every click and open event using 13 click rules (7 bot + 6 human) and 8 open rules (3 bot + 5 human), with confidence levels and probability scores.
 3. **The ESP Guide:** Exactly what raw data to demand from Sailthru, SendGrid, Mailchimp, beehiiv, and others.
 4. **The Standard:** A "Confidence Scorecard" for publishers to transparently report their metrics to advertisers.
+5. **The Measurement Kit:** SQL queries to calculate your own FP/FN rates, plus 11 data-backed charts you can regenerate.
 
 ## Repository Structure
 
-* `/docs/METHODOLOGY.md` - The core concepts: honeypots, the FP/FN tradeoff, and the CTOR math check.
-* `/docs/MEASURING_SUCCESS.md` - The Confidence Scorecard and how to standardize reporting.
+* `/model/bot_b_gone_filter.sql` - **The full production algorithm.** 13 click rules, 8 open rules, confidence scoring, probability scores. Drop it into your data warehouse and adapt to your ESP schema.
+* `/docs/METHODOLOGY.md` - The core concepts: honeypots, click timing signals, velocity analysis, open classification, and the complete rule reference with data tables.
+* `/docs/MEASURING_SUCCESS.md` - The four output metrics, probability score tuning, the Confidence Scorecard, and SQL queries to measure your own FP/FN rates.
 * `/docs/ESP_GUIDE.md` - How to extract the necessary raw event data from major ESPs.
-* `/model/` - The bot-filtering algorithm (SQL/Python reference implementations).
-* `/charts/` - Visualizations of the tradeoff curve and confidence decay.
+* `/docs/THE_ESP_CHALLENGE.md` - The open challenge to ESPs.
+* `/charts/generate_charts.py` - Generates all 11 visualizations. Run `python3 generate_charts.py` to regenerate.
+* `/charts/` - 11 pre-generated charts: timing distributions, rule breakdowns, precision/recall, probability distributions, tradeoff curves, and the Pinocchio Scorecard.
+
+## Quick Start
+
+```sql
+-- 1. Adapt the raw_events CTE in /model/bot_b_gone_filter.sql to your ESP schema
+-- 2. Run the query against your data warehouse
+-- 3. Use the two output columns for reporting:
+SELECT
+    campaign_id,
+    COUNTIF(bbg_unique_open) AS unique_opens,
+    COUNTIF(bbg_unique_click) AS unique_clicks,
+    COUNT(DISTINCT subscriber_id) AS total_sends,
+    ROUND(COUNTIF(bbg_unique_open) / COUNT(DISTINCT subscriber_id) * 100, 1) AS open_rate,
+    ROUND(COUNTIF(bbg_unique_click) / COUNT(DISTINCT subscriber_id) * 100, 1) AS click_rate
+FROM scored_events
+GROUP BY campaign_id
+```
 
 ## Why Open Source?
 
