@@ -6,11 +6,11 @@
 
 ## The Problem
 
-More than half of all email opens are bots. Up to 85% of clicks are non-human. Security scanners, link prefetchers, and corporate mail proxies are firing pixels and following links before a person ever touches the email.
+More than half of all email opens are bots. Up to 97% of clicks are non-human. Security scanners, link prefetchers, and corporate mail proxies are firing pixels and following links before a person ever touches the email.
 
 Every Email Service Provider (ESP) has a bot filter. But ESPs are incentivized to show you a number that feels good, not a number that is perfectly accurate. High open rates keep customers happy. 
 
-If you are a publisher selling advertising against those numbers, you are flying on instruments you didn't build, can't inspect, and don't control.
+If you are a publisher or platform selling advertising against those numbers, you are flying on instruments you didn't build, can't inspect, and don't control.
 
 ## The Solution
 
