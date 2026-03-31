@@ -1,11 +1,10 @@
 """
 Bot-B-Gone ML — train.py
-Exp 21: Custom objective with confidence penalty.
-The MSE metric rewards predicting 0.50 for ambiguous labels. But we WANT
-the model to commit. Use a custom objective that:
-  - For non-ambiguous labels: standard squared error
-  - For ambiguous labels: squared error + penalty for being close to 0.50
-This should push predictions away from the center while still tracking labels.
+Exp 24: Sample weighting — gold standard samples get 5x weight.
+The model currently treats all 2M samples equally. But we KNOW the gold
+standard labels are correct (honeypot bots + Sailthru real humans). The
+ambiguous 54.8% are guesses. Weight the known-correct samples 5x higher
+so the model focuses on getting those right.
 """
 import sys, time
 import numpy as np
@@ -70,56 +69,34 @@ def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.15):
     new_labels[amb] = np.clip(0.50 + adjustment, 0.0, 1.0)
     return new_labels
 
-# Store ambiguous mask globally for the custom objective
-_amb_mask = None
-
-def confidence_objective(preds, train_data):
-    """Custom objective: MSE + confidence penalty for ambiguous samples."""
-    global _amb_mask
-    labels = train_data.get_label()
-    residual = preds - labels
-    
-    # Standard gradient and hessian for MSE
-    grad = 2 * residual
-    hess = np.full_like(residual, 2.0)
-    
-    # Add confidence penalty for ambiguous samples
-    # Penalty: push predictions away from 0.5
-    if _amb_mask is not None and len(_amb_mask) == len(preds):
-        # Penalty gradient: d/dp of -alpha * (p - 0.5)^2
-        # = -2 * alpha * (p - 0.5)
-        # This pushes predictions AWAY from 0.5
-        alpha = 0.05  # penalty strength (0.3 too aggressive, 0.1 still hurt MSE)
-        penalty_grad = -2 * alpha * (preds - 0.5)
-        penalty_grad[~_amb_mask] = 0  # only apply to ambiguous
-        grad += penalty_grad
-    
-    return grad, hess
-
 def train():
-    global _amb_mask
     X_raw, soft_labels, hard_labels, feature_cols = load_data()
     splits = split_data(X_raw, soft_labels, hard_labels)
     X_tr, X_v, X_te = splits[0], splits[1], splits[2]
     sl_tr, sl_v, sl_te = splits[3], splits[4], splits[5]
     hl_tr, hl_v, hl_te = splits[6], splits[7], splits[8]
     sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.15)
-    
-    _amb_mask = np.abs(sl_tr - 0.50) < 0.01
-    
     X_train = engineer_features(X_tr)
     X_val = engineer_features(X_v)
     X_test = engineer_features(X_te)
     
+    # Create sample weights: gold standard samples get 5x weight
+    # Gold standard = hard_label is 0 (definitive bot) or 1 (definitive human)
+    # Ambiguous = hard_label is -1
+    weights = np.ones(len(sl_tr_s), dtype=np.float32)
+    gold_mask = hl_tr >= 0  # has a hard label
+    weights[gold_mask] = 5.0
+    
     print(f"Features: {X_train.shape[1]}")
-    print(f"Ambiguous samples in train: {_amb_mask.sum():,} ({_amb_mask.mean()*100:.1f}%)")
+    print(f"Gold standard samples: {gold_mask.sum():,} ({gold_mask.mean()*100:.1f}%) with 5x weight")
+    print(f"Ambiguous samples: {(~gold_mask).sum():,} ({(~gold_mask).mean()*100:.1f}%) with 1x weight")
     
     t0 = time.time()
-    train_data = lgb.Dataset(X_train, label=sl_tr_s)
+    train_data = lgb.Dataset(X_train, label=sl_tr_s, weight=weights)
     val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
     
     params = {
-        "objective": confidence_objective,
+        "objective": "regression",
         "metric": "rmse",
         "num_leaves": 127,
         "learning_rate": 0.03,
@@ -134,13 +111,10 @@ def train():
         "n_jobs": -1,
     }
     
-    train_data_obj = lgb.Dataset(X_train, label=sl_tr_s, free_raw_data=False)
-    val_data_obj = lgb.Dataset(X_val, label=sl_v, reference=train_data_obj, free_raw_data=False)
-    
     model = lgb.train(
-        params, train_data_obj,
+        params, train_data,
         num_boost_round=800,
-        valid_sets=[val_data_obj],
+        valid_sets=[val_data],
         callbacks=[lgb.log_evaluation(0)],
     )
     train_time = time.time() - t0
@@ -150,8 +124,8 @@ def train():
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp21_confidence_penalty",
-               notes=f"custom obj with confidence penalty alpha=0.3, features={X_train.shape[1]}, train_time={train_time:.1f}s")
+    log_result(val_m, test_m, experiment_name="exp24_gold_weighting",
+               notes=f"gold standard 5x weight, features={X_train.shape[1]}, train_time={train_time:.1f}s")
     model.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
