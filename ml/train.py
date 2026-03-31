@@ -93,14 +93,14 @@ def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.35):
     ttfc_score = np.clip(np.log1p(ttfc) / np.log1p(86400), 0, 1)
     
     # Weighted combination
-    humanness = (0.35 * hist_rate + 
-                 0.12 * ttfo_score + 
-                 0.08 * reopen_score +
+    humanness = (0.25 * hist_rate + 
+                 0.15 * ttfo_score + 
+                 0.10 * reopen_score +
                  0.15 * nhi_click +
                  0.10 * nhi_open +
-                 0.03 * click_score +
+                 0.05 * click_score +
                  0.10 * ic_score +
-                 0.07 * ttfc_score)
+                 0.10 * ttfc_score)
     
     # Asymmetric spreading: push bot-like samples harder (cleaner signal)
     bot_spread = spread_amount * 1.3  # more aggressive for bot side
