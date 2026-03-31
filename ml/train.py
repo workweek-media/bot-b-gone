@@ -1,8 +1,7 @@
 """
 Bot-B-Gone ML — train.py
-Exp 6: LightGBM instead of XGBoost
-Hypothesis: LightGBM uses leaf-wise growth (vs XGBoost's level-wise), which
-can produce more nuanced splits. May naturally spread predictions better.
+Exp 7: LightGBM + more leaves (127) + lower LR (0.03) + more rounds (800)
+Hypothesis: LightGBM won. Push it further with more capacity.
 """
 import sys, time
 import numpy as np
@@ -62,8 +61,8 @@ def train():
     params = {
         "objective": "regression",
         "metric": "rmse",
-        "num_leaves": 63,
-        "learning_rate": 0.05,
+        "num_leaves": 127,
+        "learning_rate": 0.03,
         "feature_fraction": 0.8,
         "bagging_fraction": 0.8,
         "bagging_freq": 5,
@@ -77,7 +76,7 @@ def train():
     
     model = lgb.train(
         params, train_data,
-        num_boost_round=500,
+        num_boost_round=800,
         valid_sets=[val_data],
         callbacks=[lgb.log_evaluation(0)],
     )
@@ -88,8 +87,8 @@ def train():
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp6_lightgbm",
-               notes=f"LightGBM, leaves=63, lr=0.05, n=500, train_time={train_time:.1f}s")
+    log_result(val_m, test_m, experiment_name="exp7_lgbm_127leaves_lr03_n800",
+               notes=f"LightGBM, leaves=127, lr=0.03, n=800, train_time={train_time:.1f}s")
     model.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
