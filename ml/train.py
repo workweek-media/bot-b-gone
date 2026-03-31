@@ -1,17 +1,11 @@
 """
 Bot-B-Gone ML — train.py
-Exp 20: Surgical optimization.
-Key insight from experiments 13-19:
-  - spread_amount=0.15 -> spread=75.87, MSE=0.001703 -> composite 92.78
-  - spread_amount=0.18 -> spread=80.64, MSE=0.002444 -> composite 92.56
-  - spread_amount=0.20 -> spread=81.58, MSE=0.003015 -> composite 92.32
-  
-  The tradeoff is: more spread = worse MSE. The composite weights MSE at 30%
-  and spread at 20%, so MSE dominates.
-  
-  Strategy: keep spread=0.15, add ONLY the open-to-click gap feature,
-  and use early stopping to prevent overfitting. Also try num_leaves=255
-  for more capacity to learn nuance in the gray zone.
+Exp 21: Custom objective with confidence penalty.
+The MSE metric rewards predicting 0.50 for ambiguous labels. But we WANT
+the model to commit. Use a custom objective that:
+  - For non-ambiguous labels: standard squared error
+  - For ambiguous labels: squared error + penalty for being close to 0.50
+This should push predictions away from the center while still tracking labels.
 """
 import sys, time
 import numpy as np
@@ -60,14 +54,6 @@ def engineer_features(X):
     base.append(quantile_bin(0))
     base.append(quantile_bin(6))
     base.append(quantile_bin(11))
-    
-    # NEW: Open-to-click gap (only new feature that showed promise)
-    ttfo = X[:, 6].copy()
-    ttfc = X[:, 0].copy()
-    gap = np.where((ttfo >= 0) & (ttfc >= 0), ttfc - ttfo, -1.0)
-    base.append(gap.reshape(-1, 1))
-    base.append(np.log1p(np.maximum(gap, 0)).reshape(-1, 1))
-    
     return np.hstack(base)
 
 def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.15):
@@ -84,35 +70,63 @@ def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.15):
     new_labels[amb] = np.clip(0.50 + adjustment, 0.0, 1.0)
     return new_labels
 
+# Store ambiguous mask globally for the custom objective
+_amb_mask = None
+
+def confidence_objective(preds, train_data):
+    """Custom objective: MSE + confidence penalty for ambiguous samples."""
+    global _amb_mask
+    labels = train_data.get_label()
+    residual = preds - labels
+    
+    # Standard gradient and hessian for MSE
+    grad = 2 * residual
+    hess = np.full_like(residual, 2.0)
+    
+    # Add confidence penalty for ambiguous samples
+    # Penalty: push predictions away from 0.5
+    if _amb_mask is not None and len(_amb_mask) == len(preds):
+        # Penalty gradient: d/dp of -alpha * (p - 0.5)^2
+        # = -2 * alpha * (p - 0.5)
+        # This pushes predictions AWAY from 0.5
+        alpha = 0.3  # penalty strength
+        penalty_grad = -2 * alpha * (preds - 0.5)
+        penalty_grad[~_amb_mask] = 0  # only apply to ambiguous
+        grad += penalty_grad
+    
+    return grad, hess
+
 def train():
+    global _amb_mask
     X_raw, soft_labels, hard_labels, feature_cols = load_data()
     splits = split_data(X_raw, soft_labels, hard_labels)
     X_tr, X_v, X_te = splits[0], splits[1], splits[2]
     sl_tr, sl_v, sl_te = splits[3], splits[4], splits[5]
     hl_tr, hl_v, hl_te = splits[6], splits[7], splits[8]
     sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.15)
+    
+    _amb_mask = np.abs(sl_tr - 0.50) < 0.01
+    
     X_train = engineer_features(X_tr)
     X_val = engineer_features(X_v)
     X_test = engineer_features(X_te)
     
     print(f"Features: {X_train.shape[1]}")
+    print(f"Ambiguous samples in train: {_amb_mask.sum():,} ({_amb_mask.mean()*100:.1f}%)")
     
     t0 = time.time()
     train_data = lgb.Dataset(X_train, label=sl_tr_s)
     val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
     
     params = {
-        "objective": "regression",
-        "metric": "rmse",
-        "num_leaves": 255,
-        "learning_rate": 0.02,
+        "num_leaves": 127,
+        "learning_rate": 0.03,
         "feature_fraction": 0.8,
         "bagging_fraction": 0.8,
         "bagging_freq": 5,
-        "min_child_samples": 20,
+        "min_child_samples": 10,
         "lambda_l1": 0.5,
         "lambda_l2": 2.0,
-        "max_depth": -1,
         "verbose": -1,
         "seed": 42,
         "n_jobs": -1,
@@ -120,20 +134,20 @@ def train():
     
     model = lgb.train(
         params, train_data,
-        num_boost_round=2000,
+        num_boost_round=800,
+        fobj=confidence_objective,
         valid_sets=[val_data],
-        callbacks=[lgb.log_evaluation(100), lgb.early_stopping(100)],
+        callbacks=[lgb.log_evaluation(0)],
     )
     train_time = time.time() - t0
-    print(f"Best iteration: {model.best_iteration}")
     
     val_preds = np.clip(model.predict(X_val), 0, 1)
     test_preds = np.clip(model.predict(X_test), 0, 1)
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp20_surgical",
-               notes=f"255 leaves, lr=0.02, early_stop=100, gap feature, spread=0.15, features={X_train.shape[1]}, best_iter={model.best_iteration}, train_time={train_time:.1f}s")
+    log_result(val_m, test_m, experiment_name="exp21_confidence_penalty",
+               notes=f"custom obj with confidence penalty alpha=0.3, features={X_train.shape[1]}, train_time={train_time:.1f}s")
     model.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
