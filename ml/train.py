@@ -1,11 +1,10 @@
 """
 Bot-B-Gone ML — train.py
-Exp 17: Self-training (bootstrapping) to break the 0.50 cluster.
-1. Train initial model on spread labels (exp 10 approach)
-2. Use initial model to predict on training set
-3. For ambiguous labels (0.50), replace with model's own prediction (pseudo-labels)
-4. Retrain on pseudo-labels
-This forces the model to commit to its own beliefs about the gray zone.
+Exp 18: Iterative self-training (3 rounds) with 80/20 blend.
+Exp 17 was 92.73 with 60/40 blend and 1 round. Try:
+  - 80% model prediction / 20% original label (more aggressive)
+  - 3 rounds of self-training (model refines its own beliefs)
+  - Each round uses the previous round's model to update pseudo-labels
 """
 import sys, time
 import numpy as np
@@ -84,6 +83,7 @@ def train():
     print(f"Features: {X_train.shape[1]}")
     
     t0 = time.time()
+    amb = np.abs(sl_tr - 0.50) < 0.01
     
     params = {
         "objective": "regression",
@@ -101,41 +101,37 @@ def train():
         "n_jobs": -1,
     }
     
-    # Stage 1: Train initial model
-    train_data = lgb.Dataset(X_train, label=sl_tr_s)
-    val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
-    model1 = lgb.train(params, train_data, num_boost_round=400,
-                        valid_sets=[val_data], callbacks=[lgb.log_evaluation(0)])
+    current_labels = sl_tr_s.copy()
+    blend_ratios = [0.5, 0.7, 0.8]  # increasingly trust the model
     
-    # Generate pseudo-labels for ambiguous samples
-    initial_preds = np.clip(model1.predict(X_train), 0, 1)
-    amb = np.abs(sl_tr - 0.50) < 0.01  # original ambiguous labels
-    
-    # Blend: 60% model prediction, 40% spread label (soft transition)
-    pseudo_labels = sl_tr_s.copy()
-    pseudo_labels[amb] = 0.6 * initial_preds[amb] + 0.4 * sl_tr_s[amb]
-    pseudo_labels = np.clip(pseudo_labels, 0, 1)
-    
-    print(f"Pseudo-labeled {amb.sum():,} ambiguous samples")
-    print(f"  Original 0.50 cluster: {(np.abs(sl_tr - 0.50) < 0.01).sum():,}")
-    print(f"  New label std in amb: {pseudo_labels[amb].std():.4f}")
-    
-    # Stage 2: Retrain on pseudo-labels
-    train_data2 = lgb.Dataset(X_train, label=pseudo_labels)
-    val_data2 = lgb.Dataset(X_val, label=sl_v, reference=train_data2)
-    model2 = lgb.train(params, train_data2, num_boost_round=800,
-                        valid_sets=[val_data2], callbacks=[lgb.log_evaluation(0)])
+    for round_i, blend in enumerate(blend_ratios):
+        print(f"\n--- Self-training round {round_i+1}, blend={blend} ---")
+        
+        train_data = lgb.Dataset(X_train, label=current_labels)
+        val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
+        
+        n_rounds = 400 if round_i < 2 else 800
+        model = lgb.train(params, train_data, num_boost_round=n_rounds,
+                          valid_sets=[val_data], callbacks=[lgb.log_evaluation(0)])
+        
+        # Update pseudo-labels for ambiguous samples
+        preds = np.clip(model.predict(X_train), 0, 1)
+        current_labels[amb] = blend * preds[amb] + (1 - blend) * sl_tr_s[amb]
+        current_labels = np.clip(current_labels, 0, 1)
+        
+        print(f"  Amb label std: {current_labels[amb].std():.4f}")
+        print(f"  Amb label mean: {current_labels[amb].mean():.4f}")
     
     train_time = time.time() - t0
     
-    val_preds = np.clip(model2.predict(X_val), 0, 1)
-    test_preds = np.clip(model2.predict(X_test), 0, 1)
+    val_preds = np.clip(model.predict(X_val), 0, 1)
+    test_preds = np.clip(model.predict(X_test), 0, 1)
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp17_self_training",
-               notes=f"self-training pseudo-labels, 60/40 blend, features={X_train.shape[1]}, train_time={train_time:.1f}s")
-    model2.save_model(str(Path(__file__).parent / "model.txt"))
+    log_result(val_m, test_m, experiment_name="exp18_iterative_self_train",
+               notes=f"3-round self-training, blends=[0.5,0.7,0.8], features={X_train.shape[1]}, train_time={train_time:.1f}s")
+    model.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
 if __name__ == "__main__":
