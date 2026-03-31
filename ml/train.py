@@ -1,13 +1,20 @@
 """
 Bot-B-Gone ML — train.py
-Exp 19: XGBoost + LightGBM ensemble.
-Average predictions from both models. Different gradient boosting implementations
-may disagree on the gray zone, producing better-spread probabilities.
-Also: increase spread_amount to 0.18 (sweet spot between 0.15 and 0.20).
+Exp 20: Surgical optimization.
+Key insight from experiments 13-19:
+  - spread_amount=0.15 -> spread=75.87, MSE=0.001703 -> composite 92.78
+  - spread_amount=0.18 -> spread=80.64, MSE=0.002444 -> composite 92.56
+  - spread_amount=0.20 -> spread=81.58, MSE=0.003015 -> composite 92.32
+  
+  The tradeoff is: more spread = worse MSE. The composite weights MSE at 30%
+  and spread at 20%, so MSE dominates.
+  
+  Strategy: keep spread=0.15, add ONLY the open-to-click gap feature,
+  and use early stopping to prevent overfitting. Also try num_leaves=255
+  for more capacity to learn nuance in the gray zone.
 """
 import sys, time
 import numpy as np
-import xgboost as xgb
 import lightgbm as lgb
 from pathlib import Path
 
@@ -53,9 +60,17 @@ def engineer_features(X):
     base.append(quantile_bin(0))
     base.append(quantile_bin(6))
     base.append(quantile_bin(11))
+    
+    # NEW: Open-to-click gap (only new feature that showed promise)
+    ttfo = X[:, 6].copy()
+    ttfc = X[:, 0].copy()
+    gap = np.where((ttfo >= 0) & (ttfc >= 0), ttfc - ttfo, -1.0)
+    base.append(gap.reshape(-1, 1))
+    base.append(np.log1p(np.maximum(gap, 0)).reshape(-1, 1))
+    
     return np.hstack(base)
 
-def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.18):
+def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.15):
     new_labels = soft_labels.copy()
     amb = np.abs(soft_labels - 0.50) < 0.01
     if amb.sum() == 0: return new_labels
@@ -75,7 +90,7 @@ def train():
     X_tr, X_v, X_te = splits[0], splits[1], splits[2]
     sl_tr, sl_v, sl_te = splits[3], splits[4], splits[5]
     hl_tr, hl_v, hl_te = splits[6], splits[7], splits[8]
-    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.18)
+    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.15)
     X_train = engineer_features(X_tr)
     X_val = engineer_features(X_v)
     X_test = engineer_features(X_te)
@@ -83,73 +98,43 @@ def train():
     print(f"Features: {X_train.shape[1]}")
     
     t0 = time.time()
+    train_data = lgb.Dataset(X_train, label=sl_tr_s)
+    val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
     
-    # Model 1: LightGBM
-    lgb_train = lgb.Dataset(X_train, label=sl_tr_s)
-    lgb_val = lgb.Dataset(X_val, label=sl_v, reference=lgb_train)
-    lgb_params = {
+    params = {
         "objective": "regression",
         "metric": "rmse",
-        "num_leaves": 127,
-        "learning_rate": 0.03,
+        "num_leaves": 255,
+        "learning_rate": 0.02,
         "feature_fraction": 0.8,
         "bagging_fraction": 0.8,
         "bagging_freq": 5,
-        "min_child_samples": 10,
+        "min_child_samples": 20,
         "lambda_l1": 0.5,
         "lambda_l2": 2.0,
+        "max_depth": -1,
         "verbose": -1,
         "seed": 42,
         "n_jobs": -1,
     }
-    lgb_model = lgb.train(lgb_params, lgb_train, num_boost_round=800,
-                          valid_sets=[lgb_val], callbacks=[lgb.log_evaluation(0)])
     
-    # Model 2: XGBoost with different hyperparams
-    xgb_dtrain = xgb.DMatrix(X_train, label=sl_tr_s)
-    xgb_dval = xgb.DMatrix(X_val, label=sl_v)
-    xgb_dtest = xgb.DMatrix(X_test)
-    xgb_params = {
-        "objective": "reg:squarederror",
-        "eval_metric": "rmse",
-        "max_depth": 8,
-        "learning_rate": 0.03,
-        "subsample": 0.8,
-        "colsample_bytree": 0.7,
-        "reg_alpha": 1.0,
-        "reg_lambda": 3.0,
-        "min_child_weight": 10,
-        "seed": 123,
-        "nthread": -1,
-        "verbosity": 0,
-    }
-    xgb_model = xgb.train(xgb_params, xgb_dtrain, num_boost_round=600,
-                          evals=[(xgb_dval, "val")], verbose_eval=False)
-    
+    model = lgb.train(
+        params, train_data,
+        num_boost_round=2000,
+        valid_sets=[val_data],
+        callbacks=[lgb.log_evaluation(100), lgb.early_stopping(100)],
+    )
     train_time = time.time() - t0
+    print(f"Best iteration: {model.best_iteration}")
     
-    # Ensemble: weighted average (0.6 LightGBM + 0.4 XGBoost)
-    lgb_val_preds = np.clip(lgb_model.predict(X_val), 0, 1)
-    xgb_val_preds = np.clip(xgb_model.predict(xgb_dval), 0, 1)
-    val_preds = 0.6 * lgb_val_preds + 0.4 * xgb_val_preds
-    
-    lgb_test_preds = np.clip(lgb_model.predict(X_test), 0, 1)
-    xgb_test_preds = np.clip(xgb_model.predict(xgb_dtest), 0, 1)
-    test_preds = 0.6 * lgb_test_preds + 0.4 * xgb_test_preds
-    
-    # Check disagreement
-    disagreement = np.abs(lgb_val_preds - xgb_val_preds)
-    print(f"Model disagreement: mean={disagreement.mean():.4f}, max={disagreement.max():.4f}")
-    print(f"  LGB mean={lgb_val_preds.mean():.4f} std={lgb_val_preds.std():.4f}")
-    print(f"  XGB mean={xgb_val_preds.mean():.4f} std={xgb_val_preds.std():.4f}")
-    print(f"  Ensemble mean={val_preds.mean():.4f} std={val_preds.std():.4f}")
-    
+    val_preds = np.clip(model.predict(X_val), 0, 1)
+    test_preds = np.clip(model.predict(X_test), 0, 1)
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp19_ensemble",
-               notes=f"LGB+XGB ensemble 60/40, spread=0.18, features={X_train.shape[1]}, train_time={train_time:.1f}s")
-    lgb_model.save_model(str(Path(__file__).parent / "model.txt"))
+    log_result(val_m, test_m, experiment_name="exp20_surgical",
+               notes=f"255 leaves, lr=0.02, early_stop=100, gap feature, spread=0.15, features={X_train.shape[1]}, best_iter={model.best_iteration}, train_time={train_time:.1f}s")
+    model.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
 if __name__ == "__main__":
