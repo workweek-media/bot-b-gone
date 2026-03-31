@@ -130,14 +130,14 @@ def train():
     params = {
         "objective": "regression",
         "metric": "rmse",
-        "num_leaves": 95,
-        "learning_rate": 0.02,
-        "feature_fraction": 0.75,
-        "bagging_fraction": 0.75,
+        "num_leaves": 127,
+        "learning_rate": 0.03,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
         "bagging_freq": 5,
-        "min_child_samples": 20,
-        "lambda_l1": 1.0,
-        "lambda_l2": 3.0,
+        "min_child_samples": 10,
+        "lambda_l1": 0.5,
+        "lambda_l2": 2.0,
         "verbose": -1,
         "seed": 42,
         "n_jobs": -1,
@@ -145,7 +145,7 @@ def train():
     
     model = lgb.train(
         params, train_data,
-        num_boost_round=1200,
+        num_boost_round=800,
         valid_sets=[val_data],
         callbacks=[lgb.log_evaluation(0)],
     )

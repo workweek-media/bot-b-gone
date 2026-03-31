@@ -1,1 +1,40 @@
 timestampexperimentval_compositeval_ksval_mseval_eceval_spreadtest_compositetest_ksstatusnotes
+2026-03-31 02:48:57	exp13_omeda_nikwen	91.36	99.47	0.001213	0.024575	70.63	91.38	99.51	keep	omeda+nikwen signals, features=63, spread=0.18, train_time=11.7s
+a1a32d5	exp13_omeda_nikwen	91.36	99.47	0.001213	0.024575	70.63	91.38	99.47	discard	more features hurt MSE, spread dropped from 75.87
+2026-03-31 02:54:47	exp14_targeted_omeda	92.32	99.75	0.003015	0.035599	81.58	92.32	99.79	keep	open-to-click gap + signal counts + spread=0.20, features=48, train_time=39.4s
+bd3a89f	exp14_targeted_omeda	92.32	99.75	0.003015	0.035599	81.58	92.32	99.75	discard	spread 75->81.58 best ever but MSE/ECE worse. Composite 92.32 vs 92.78
+2026-03-31 03:01:03	exp15_balanced	92.47	99.75	0.002182	0.030272	79.19	92.46	99.75	keep	exp10+gap+signals, spread=0.17, ff=0.7, features=48, train_time=40.8s
+cbcc806	exp15_balanced	92.47	99.75	0.002182	0.030272	79.19	-	-	discard	spread=0.17 ff=0.7. Spread 75->79 but composite 92.47 vs 92.78
+2026-03-31 03:06:05	exp16_two_stage	92.64	99.91	0.001703	0.026677	77.69	92.64	99.93	keep	tier classifier + regressor with tier probs, features=46, train_time=98.9s
+2645d7d	exp16_two_stage	92.64	99.91	0.001703	0.026677	77.69	92.64	99.93	discard	KS best ever 99.91 but composite 92.64 vs 92.78. Tier probs helped KS but not spread.
+2026-03-31 03:09:24	exp17_self_training	92.73	99.79	0.001704	0.02668	78.33	92.73	99.78	keep	self-training pseudo-labels, 60/40 blend, features=43, train_time=65.9s
+578fb8e	exp17_self_training	92.73	99.79	0.001704	0.02668	78.33	92.73	99.79	discard	self-training 60/40 blend. Close to best (92.73 vs 92.78). KS=99.79 good. Spread still 78.
+2026-03-31 03:17:39	exp18_iterative_self_train	92.77	99.8	0.001703	0.026678	78.53	92.77	99.79	keep	3-round self-training, blends=[0.5,0.7,0.8], features=43, train_time=122.7s
+865262e	exp18_iterative_self_train	92.77	99.8	0.001703	0.026678	78.53	92.77	99.8	discard	3-round self-training. Labels not moving (std stuck at 0.0396). Composite 92.77 vs 92.78.
+2026-03-31 03:21:15	exp19_ensemble	92.56	99.77	0.002444	0.032025	80.64	92.56	99.78	keep	LGB+XGB ensemble 60/40, spread=0.18, features=43, train_time=62.3s
+c97064b	exp19_ensemble	92.56	99.77	0.002444	0.032025	80.64	92.56	99.77	discard	LGB+XGB barely disagree (0.0007). Spread=80.64 from spread_amount=0.18. Composite 92.56.
+2026-03-31 03:26:45	exp20_surgical	91.04	99.45	0.001667	0.030389	72.2	91.02	99.41	keep	255 leaves, lr=0.02, early_stop=100, gap feature, spread=0.15, features=45, best_iter=150, train_time=19.8s
+b1a0892	exp20_surgical	91.04	99.45	0.001667	0.030389	72.2	91.02	99.45	discard	255 leaves overfits fast. Early stop at 150. Spread dropped to 72.2.
+2026-03-31 03:44:01	exp21_confidence_penalty	92.27	99.71	0.003459	0.038144	82.93	92.27	99.74	keep	custom obj with confidence penalty alpha=0.3, features=43, train_time=50.5s
+05725c4	exp21_confidence_penalty	92.27	99.71	0.003459	0.038144	82.93	92.27	99.71	discard	Spread=82.93 BEST EVER but MSE/ECE degraded. alpha=0.3 too aggressive.
+2026-03-31 03:46:32	exp21_confidence_penalty	92.58	99.76	0.002098	0.029649	79.34	92.59	99.8	keep	custom obj with confidence penalty alpha=0.3, features=43, train_time=46.9s
+856b185	exp22_alpha_0.1	92.58	99.76	0.002098	0.029649	79.34	92.59	99.76	discard	alpha=0.1. Spread=79.34 MSE=0.002098. Better than 0.3 but still below baseline 92.78.
+2026-03-31 03:50:17	exp21_confidence_penalty	92.62	99.8	0.001886	0.02809	78.58	92.63	99.84	keep	custom obj with confidence penalty alpha=0.3, features=43, train_time=46.8s
+afcc577	exp23_alpha_0.05	92.62	99.8	0.001886	0.02809	78.58	92.63	99.8	discard	alpha=0.05. Trend clear: penalty always hurts composite. Baseline 92.78 still best.
+2026-03-31 03:55:01	exp24_gold_weighting	92.52	99.8	0.001705	0.026703	77.25	92.52	99.79	keep	gold standard 5x weight, features=43, train_time=34.9s
+ac7180e	exp24_gold_5x_weight	92.52	99.8	0.001705	0.026703	77.25	92.52	99.8	discard	Gold 5x weight. Spread=77.25 composite=92.52. Weighting hurts spread.
+2026-03-31 04:01:48	exp25_rich_spread	92.9	99.77	0.00035	0.011316	70.7	92.88	99.74	keep	8-signal spreading, spread=0.20, features=43, train_time=39.8s
+8d469c4	exp25_rich_spread	92.90	99.77	0.00035	0.011316	70.7	92.88	99.77	KEEP_BEST	NEW BEST! 8-signal spread. MSE=0.00035 ECE=0.011 amazing. Spread=70.7 too low. Labels too conservative (std=0.0235).
+2026-03-31 04:06:01	exp25_rich_spread	92.9	99.77	0.00035	0.011316	70.7	92.88	99.74	keep	8-signal spreading, spread=0.20, features=43, train_time=38.6s
+2026-03-31 04:10:28	exp25_rich_spread	93.53	99.79	0.001026	0.019669	78.44	93.52	99.74	keep	8-signal spreading, spread=0.20, features=43, train_time=38.9s
+94374dc	exp26_8sig_0.35	93.53	99.79	0.001026	0.019669	78.44	93.52	99.79	KEEP_BEST	NEW BEST 93.53! 8-signal spread=0.35. MSE=0.001 ECE=0.020 Spread=78.44. Huge jump from 92.90.
+2026-03-31 04:12:50	exp25_rich_spread	93.45	99.77	0.002071	0.028088	82.86	93.44	99.76	keep	8-signal spreading, spread=0.20, features=43, train_time=38.1s
+5a066c2	exp27_8sig_0.50	93.45	99.77	0.002071	0.028088	82.86	93.44	99.77	discard	Spread=82.86 best ever! But MSE=0.002 hurt composite. Sweet spot between 0.35-0.50.
+2026-03-31 04:15:55	exp25_rich_spread	93.56	99.78	0.001468	0.02361	80.84	93.55	99.75	keep	8-signal spreading, spread=0.20, features=43, train_time=39.2s
+20a7d49	exp28_8sig_0.42	93.56	99.78	0.001468	0.02361	80.84	93.55	99.78	KEEP_BEST	NEW BEST 93.56! spread=0.42 sweet spot. Spread=80.84 MSE=0.001468.
+2026-03-31 04:19:57	exp25_rich_spread	93.52	99.77	0.001333	0.022478	79.98	93.51	99.76	keep	8-signal spreading, spread=0.20, features=43, train_time=40.4s
+f24c65a	exp29_8sig_0.40	93.52	-	0.001333	0.022478	79.98	-	-	discard	spread=0.40 -> 93.52. 0.42 still best (93.56).
+2026-03-31 04:26:11	exp25_rich_spread	93.54	99.78	0.001609	0.024725	81.36	93.52	99.75	keep	8-signal spreading, spread=0.20, features=43, train_time=37.3s
+e8f8b64	exp30_8sig_0.44	93.54	-	0.001609	0.024725	81.36	-	-	discard	spread=0.44 -> 93.54. 0.42 confirmed as sweet spot (93.56).
+2026-03-31 04:32:55	exp25_rich_spread	93.54	99.72	0.001468	0.02362	80.83	93.54	99.71	keep	8-signal spreading, spread=0.20, features=43, train_time=55.1s
+b067fb7	exp31_more_reg	93.54	99.72	0.001468	0.02362	80.83	-	-	discard	More reg hurt slightly. 93.54 vs 93.56. Original hyperparams better.
