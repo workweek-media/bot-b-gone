@@ -38,3 +38,33 @@ f24c65a	exp29_8sig_0.40	93.52	-	0.001333	0.022478	79.98	-	-	discard	spread=0.40 
 e8f8b64	exp30_8sig_0.44	93.54	-	0.001609	0.024725	81.36	-	-	discard	spread=0.44 -> 93.54. 0.42 confirmed as sweet spot (93.56).
 2026-03-31 04:32:55	exp25_rich_spread	93.54	99.72	0.001468	0.02362	80.83	93.54	99.71	keep	8-signal spreading, spread=0.20, features=43, train_time=55.1s
 b067fb7	exp31_more_reg	93.54	99.72	0.001468	0.02362	80.83	-	-	discard	More reg hurt slightly. 93.54 vs 93.56. Original hyperparams better.
+2026-03-31 06:11:08	exp32_two_model_blend	82.36	99.99	0.01507	0.10087	71.27	82.35	99.97	keep	Soft+hard model blend, spread=0.42, features=43, train_time=62.9s
+dd2fda3	exp32_blend	82.36	99.99	0.01507	0.10087	71.27	82.35	99.99	discard	Blend destroyed MSE/ECE. Hard model pushes gold standard away from soft labels.
+2026-03-31 06:13:29	exp25_rich_spread	93.5	99.79	0.001467	0.023609	80.48	93.48	99.77	keep	8-signal spreading, spread=0.20, features=49, train_time=57.5s
+d4b1e92	exp33_interactions	93.50	99.79	0.001467	0.023609	80.48	93.48	99.79	discard	Interaction features hurt slightly. 93.50 vs 93.56.
+2026-03-31 06:15:41	exp25_rich_spread	93.7	99.77	0.001905	0.026755	83.39	93.7	99.76	keep	8-signal spreading, spread=0.20, features=43, train_time=56.3s
+1ba0f8a	exp34_asymmetric	93.70	99.77	0.001905	0.026755	83.39	93.70	99.77	KEEP_BEST	NEW BEST 93.70! Asymmetric spread bot=1.3x human=0.8x. Spread=83.39 best ever!
+2026-03-31 06:17:52	exp25_rich_spread	93.6	99.77	0.002334	0.029124	84.29	93.59	99.76	keep	8-signal spreading, spread=0.20, features=43, train_time=65.0s
+3b2d7ec	exp35_asym_1.5_0.7	93.60	-	0.002334	0.029124	84.29	-	-	discard	Spread=84.29 best but MSE hurt. 1.3/0.8 still optimal.
+2026-03-31 06:20:51	exp25_rich_spread	93.7	99.78	0.002109	0.027937	84.04	93.69	99.76	keep	8-signal spreading, spread=0.20, features=43, train_time=106.5s
+a45bce3	exp36_asym_1.4_0.75	93.70	-	0.002109	0.027937	84.04	-	-	KEEP_TIED	Tied 93.70 with exp34. Better spread (84.04 vs 83.39) but worse MSE.
+2026-03-31 06:24:07	exp25_rich_spread	92.07	99.55	0.004792	0.045293	86.55	92.04	99.47	keep	8-signal spreading, spread=0.20, features=43, train_time=26.5s
+eac10a1	exp37_reweight	92.07	-	0.004792	-	86.55	-	-	discard	Reweighting hurt MSE badly. Spread=86.55 best ever but composite dropped.
+2026-03-31 06:41:31	exp25_rich_spread	93.99	99.81	0.001716	0.025633	84.1	93.99	99.82	keep	8-signal spreading, spread=0.20, features=43, train_time=78.3s
+7c260f7	exp38_9mo_data	93.99	99.81	0.001716	0.025633	84.10	93.99	99.81	KEEP_BEST	NEW BEST 93.99! Same model, 4.37M rows (2x more data). More data helped.
+2026-03-31 06:44:51	exp25_rich_spread	93.93	99.81	0.001967	0.027469	84.83	93.93	99.82	keep	8-signal spreading, spread=0.20, features=43, train_time=74.2s
+d41f544	exp39_spread045	93.93	-	0.001967	0.027469	84.83	93.93	-	discard	spread 0.42->0.45 hurt. 0.42 still optimal.
+2026-03-31 06:48:59	exp25_rich_spread	94.0	99.81	0.001716	0.025639	84.13	94.01	99.83	keep	8-signal spreading, spread=0.20, features=43, train_time=108.6s
+0583da5	exp40_1200rounds	94.00	-	0.001716	0.025639	84.13	94.01	-	KEEP_BEST	94.00! 1200 rounds marginally better than 800. MSE identical. Keep and compound.
+2026-03-31 06:52:58	exp25_rich_spread	94.0	99.8	0.001716	0.025637	84.14	94.01	99.83	keep	8-signal spreading, spread=0.20, features=43, train_time=118.9s
+61a8ee0	exp41_lr002	94.00	-	0.001716	0.025637	84.14	94.01	-	discard	LR 0.02 identical to 0.03. Model already converged. Revert.
+2026-03-31 06:57:10	exp25_rich_spread	94.0	99.73	0.001719	0.025639	84.27	94.0	99.74	keep	8-signal spreading, spread=0.20, features=43, train_time=114.0s
+2ae1855	exp42_minchild50	94.00	-	0.001719	0.025639	84.27	94.00	-	discard	min_child 10->50 identical. Hyperparams saturated. Need feature/data changes.
+2026-03-31 07:01:49	exp25_rich_spread	94.0	99.83	0.001715	0.025629	84.08	93.99	99.81	keep	8-signal spreading, spread=0.20, features=43, train_time=136.3s
+4e19d0c	exp43_ff05	94.00	99.83	0.001715	0.025629	84.08	93.99	-	discard	feature_fraction 0.5 identical to 0.8. Hyperparams fully saturated.
+2026-03-31 07:05:50	exp25_rich_spread	91.71	99.78	0.006447	0.05163	88.55	91.71	99.79	keep	8-signal spreading, spread=0.20, features=43, train_time=110.9s
+2026-03-31 07:09:22	exp25_rich_spread	91.72	99.79	0.006444	0.051601	88.58	91.72	99.76	keep	8-signal spreading, spread=0.20, features=43, train_time=84.5s
+510aa99	exp44_histrate40	91.72	-	0.006444	0.051601	88.58	91.72	-	discard	hist_rate 40% destroyed MSE (4x worse). Spread improved to 88.58 but labels too extreme (std=0.0859). Revert.
+2026-03-31 07:12:49	exp25_rich_spread	93.24	99.76	0.002964	0.03398	85.34	93.23	99.73	keep	8-signal spreading, spread=0.20, features=43, train_time=90.2s
+2f68eef	exp45_sigmoid	93.24	99.76	0.002964	0.033980	85.34	93.23	-	discard	Sigmoid spreading: spread 85.34 (best) but MSE 2x worse. Same tradeoff as exp44. Revert.
+2026-03-31 07:15:32	exp25_rich_spread	94.0	99.78	0.00172	0.025634	84.18	93.99	99.74	keep	8-signal spreading, spread=0.20, features=43, train_time=81.5s
