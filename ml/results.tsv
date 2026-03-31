@@ -1,0 +1,2 @@
+timestamp	experiment	val_ks_score	val_auc_roc	val_fpr	val_fnr	val_precision	val_recall	test_ks_score	test_auc_roc	test_fpr	test_fnr	test_precision	test_recall	notes
+2026-03-31T00:20:28.185843	baseline_xgboost	100.0	100.0	0.0	0.0	100.0	100.0	100.0	100.0	0.0	0.0	100.0	100.0	depth=6, lr=0.1, n_est=300, features=28, train_time=9.3s
