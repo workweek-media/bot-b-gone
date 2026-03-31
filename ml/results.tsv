@@ -1,2 +1,4 @@
-timestamp	experiment	val_ks_score	val_auc_roc	val_fpr	val_fnr	val_precision	val_recall	test_ks_score	test_auc_roc	test_fpr	test_fnr	test_precision	test_recall	notes
-2026-03-31T00:20:28.185843	baseline_xgboost	100.0	100.0	0.0	0.0	100.0	100.0	100.0	100.0	0.0	0.0	100.0	100.0	depth=6, lr=0.1, n_est=300, features=28, train_time=9.3s
+timestamp	experiment	val_composite	val_ks	val_mse	val_ece	val_spread	test_composite	test_ks	status	notes
+2026-03-31 00:45:02	baseline_soft_label_xgboost	92.34	99.33	8.4e-05	0.000983	63.25	92.35	99.36	keep	depth=6, lr=0.05, n_est=500, features=35, train_time=24.7s, objective=reg:squarederror
+2026-03-31 00:47:10	exp1_weighted_isotonic_deep	90.1	99.63	2.8e-05	6e-05	51.12	90.12	99.68	keep	depth=8, lr=0.03, n_est=800, features=39, train_time=36.4s, weighted_extremes_3x, isotonic_calibration
+2026-03-31 00:48:38	exp2_label_spreading	92.08	99.34	0.001718	0.026872	75.87	92.07	99.3	keep	spread_amount=0.15, baseline_params, features=35, train_time=14.6s
