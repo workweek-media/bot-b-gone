@@ -1,7 +1,9 @@
 """
 Bot-B-Gone ML — train.py
-Exp 7: LightGBM + more leaves (127) + lower LR (0.03) + more rounds (800)
-Hypothesis: LightGBM won. Push it further with more capacity.
+Exp 10: Richer feature engineering — interaction terms, quantile bins, ratios
+Hypothesis: The model is limited by features, not capacity. Add interaction
+terms between the strongest signals (nhi_open_ratio * time_to_first_open,
+user_history * click_behavior). Quantile-bin continuous features.
 """
 import sys, time
 import numpy as np
@@ -14,20 +16,57 @@ from prepare import load_data, split_data, evaluate, print_evaluation, log_resul
 def engineer_features(X):
     def safe_log(i):
         v = X[:, i].copy(); v[v < 0] = 0; return np.log1p(v).reshape(-1, 1)
-    return np.hstack([
-        X,
-        safe_log(0), safe_log(1), safe_log(2), safe_log(6), safe_log(7), safe_log(8),
-        ((X[:,0]>=0)&(X[:,0]<60)&(X[:,5]>=5)).astype(np.float32).reshape(-1,1),
-        ((X[:,4]>3)&(X[:,0]>=0)&(X[:,0]<30)).astype(np.float32).reshape(-1,1),
-        (X[:,9]>1).astype(np.float32).reshape(-1,1),
-        (X[:,9]>3).astype(np.float32).reshape(-1,1),
-        ((X[:,6]>=0)&(X[:,6]<60)).astype(np.float32).reshape(-1,1),
-        (X[:,6]>900).astype(np.float32).reshape(-1,1),
-        (X[:,11]>0.75).astype(np.float32).reshape(-1,1),
-        (X[:,11]<0.10).astype(np.float32).reshape(-1,1),
-        (X[:,16]>0.95).astype(np.float32).reshape(-1,1),
-        (X[:,15]>0.95).astype(np.float32).reshape(-1,1),
-    ])
+    
+    def safe_div(a, b):
+        result = np.zeros_like(a, dtype=np.float32)
+        mask = b > 0
+        result[mask] = a[mask] / b[mask]
+        return result.reshape(-1, 1)
+    
+    def quantile_bin(col_idx, n_bins=10):
+        v = X[:, col_idx].copy()
+        valid = v[v >= 0]
+        if len(valid) == 0:
+            return np.zeros(len(v), dtype=np.float32).reshape(-1, 1)
+        edges = np.percentile(valid, np.linspace(0, 100, n_bins + 1))
+        return np.digitize(v, edges[1:-1]).astype(np.float32).reshape(-1, 1)
+    
+    base = [X]
+    
+    # Log transforms
+    for i in [0, 1, 2, 6, 7, 8]:
+        base.append(safe_log(i))
+    
+    # Binary flags
+    base.append(((X[:,0]>=0)&(X[:,0]<60)&(X[:,5]>=5)).astype(np.float32).reshape(-1,1))
+    base.append(((X[:,4]>3)&(X[:,0]>=0)&(X[:,0]<30)).astype(np.float32).reshape(-1,1))
+    base.append((X[:,9]>1).astype(np.float32).reshape(-1,1))
+    base.append((X[:,9]>3).astype(np.float32).reshape(-1,1))
+    base.append(((X[:,6]>=0)&(X[:,6]<60)).astype(np.float32).reshape(-1,1))
+    base.append((X[:,6]>900).astype(np.float32).reshape(-1,1))
+    base.append((X[:,11]>0.75).astype(np.float32).reshape(-1,1))
+    base.append((X[:,11]<0.10).astype(np.float32).reshape(-1,1))
+    base.append((X[:,16]>0.95).astype(np.float32).reshape(-1,1))
+    base.append((X[:,15]>0.95).astype(np.float32).reshape(-1,1))
+    
+    # NEW: Interaction features
+    # nhi_open_ratio * time_to_first_open (bot signal * timing signal)
+    base.append((X[:, 15] * np.clip(np.log1p(np.maximum(X[:, 6], 0)) / 12, 0, 1)).reshape(-1, 1))
+    # user_history * nhi_click_ratio (trust * behavior)
+    base.append((X[:, 11] * (1 - X[:, 16])).reshape(-1, 1))
+    # clicks_per_second * unique_urls (speed * breadth)
+    base.append((np.clip(X[:, 13], 0, 100) * X[:, 5]).reshape(-1, 1))
+    # open_span / click_span ratio (engagement depth)
+    base.append(safe_div(X[:, 7], np.maximum(X[:, 2], 1)))
+    # verified_opens / total_opens ratio
+    base.append(safe_div(X[:, 12], np.maximum(X[:, 9], 1)))
+    
+    # NEW: Quantile bins for key continuous features
+    base.append(quantile_bin(0))   # time_to_first_click bins
+    base.append(quantile_bin(6))   # time_to_first_open bins
+    base.append(quantile_bin(11))  # user_historical_open_rate bins
+    
+    return np.hstack(base)
 
 def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.15):
     new_labels = soft_labels.copy()
@@ -53,6 +92,8 @@ def train():
     X_train = engineer_features(X_tr)
     X_val = engineer_features(X_v)
     X_test = engineer_features(X_te)
+    
+    print(f"Features: {X_train.shape[1]}")
     
     t0 = time.time()
     train_data = lgb.Dataset(X_train, label=sl_tr_s)
@@ -87,8 +128,8 @@ def train():
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp7_lgbm_127leaves_lr03_n800",
-               notes=f"LightGBM, leaves=127, lr=0.03, n=800, train_time={train_time:.1f}s")
+    log_result(val_m, test_m, experiment_name="exp10_rich_features",
+               notes=f"interactions+quantile bins, features={X_train.shape[1]}, train_time={train_time:.1f}s")
     model.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
