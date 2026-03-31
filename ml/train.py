@@ -53,23 +53,6 @@ def engineer_features(X):
     base.append(quantile_bin(0))
     base.append(quantile_bin(6))
     base.append(quantile_bin(11))
-    # Exp 33: Additional interaction features
-    # Open-to-click gap (time between first open and first click)
-    open_click_gap = X[:, 0] - X[:, 6]  # ttfc - ttfo
-    open_click_gap[open_click_gap < -1000] = 0  # handle missing
-    base.append(np.log1p(np.abs(open_click_gap)).reshape(-1, 1))
-    base.append((open_click_gap > 0).astype(np.float32).reshape(-1, 1))  # opened before clicking?
-    # Velocity consistency: std of click timing (clicks_per_sec * click_span)
-    base.append((X[:, 13] * np.maximum(X[:, 2], 0)).reshape(-1, 1))
-    # Human confidence: hist_rate * (1-nhi_open_ratio) * has_reopens
-    human_conf = X[:, 11] * (1 - X[:, 15]) * np.minimum(X[:, 9], 1)
-    base.append(human_conf.reshape(-1, 1))
-    # Bot confidence: nhi_click_ratio * clicks_per_sec * (fast_open)
-    fast_open = ((X[:, 6] >= 0) & (X[:, 6] < 60)).astype(np.float32)
-    bot_conf = X[:, 16] * np.clip(X[:, 13], 0, 10) * fast_open
-    base.append(bot_conf.reshape(-1, 1))
-    # Net signal: human_conf - bot_conf
-    base.append((human_conf - bot_conf).reshape(-1, 1))
     return np.hstack(base)
 
 def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.35):
@@ -119,7 +102,14 @@ def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.35):
                  0.10 * ic_score +
                  0.10 * ttfc_score)
     
-    adjustment = (humanness - 0.5) * 2 * spread_amount
+    # Asymmetric spreading: push bot-like samples harder (cleaner signal)
+    bot_spread = spread_amount * 1.3  # more aggressive for bot side
+    human_spread = spread_amount * 0.8  # gentler for human side
+    adjustment = np.where(
+        humanness < 0.5,
+        (humanness - 0.5) * 2 * bot_spread,
+        (humanness - 0.5) * 2 * human_spread
+    )
     new_labels[amb] = np.clip(0.50 + adjustment, 0.0, 1.0)
     
     print(f"  Label spread stats: mean={new_labels[amb].mean():.4f} std={new_labels[amb].std():.4f}")
