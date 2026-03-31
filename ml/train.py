@@ -1,9 +1,9 @@
 """
 Bot-B-Gone ML — train.py
-Exp 15: Exp 10 + open-to-click gap + signal counts, spread=0.17.
-Insight from exp 14: spread=0.20 pushed spread to 81.58 (best ever) but hurt
-MSE/ECE. Try spread=0.17 as a middle ground. Also try feature_fraction=0.7
-for more diversity in tree building.
+Exp 16: Two-stage model.
+Stage 1: LightGBM classifier into 3 tiers (bot/uncertain/human)
+Stage 2: Separate regressors for each tier to produce fine-grained probabilities.
+This should break the 0.50 cluster by giving the uncertain tier its own model.
 """
 import sys, time
 import numpy as np
@@ -32,12 +32,8 @@ def engineer_features(X):
         return np.digitize(v, edges[1:-1]).astype(np.float32).reshape(-1, 1)
     
     base = [X]
-    
-    # Log transforms
     for i in [0, 1, 2, 6, 7, 8]:
         base.append(safe_log(i))
-    
-    # Binary flags
     base.append(((X[:,0]>=0)&(X[:,0]<60)&(X[:,5]>=5)).astype(np.float32).reshape(-1,1))
     base.append(((X[:,4]>3)&(X[:,0]>=0)&(X[:,0]<30)).astype(np.float32).reshape(-1,1))
     base.append((X[:,9]>1).astype(np.float32).reshape(-1,1))
@@ -48,51 +44,17 @@ def engineer_features(X):
     base.append((X[:,11]<0.10).astype(np.float32).reshape(-1,1))
     base.append((X[:,16]>0.95).astype(np.float32).reshape(-1,1))
     base.append((X[:,15]>0.95).astype(np.float32).reshape(-1,1))
-    
-    # Interaction features
     base.append((X[:, 15] * np.clip(np.log1p(np.maximum(X[:, 6], 0)) / 12, 0, 1)).reshape(-1, 1))
     base.append((X[:, 11] * (1 - X[:, 16])).reshape(-1, 1))
     base.append((np.clip(X[:, 13], 0, 100) * X[:, 5]).reshape(-1, 1))
     base.append(safe_div(X[:, 7], np.maximum(X[:, 2], 1)))
     base.append(safe_div(X[:, 12], np.maximum(X[:, 9], 1)))
-    
-    # Quantile bins
     base.append(quantile_bin(0))
     base.append(quantile_bin(6))
     base.append(quantile_bin(11))
-    
-    # NEW: Open-to-click gap
-    ttfo = X[:, 6].copy()
-    ttfc = X[:, 0].copy()
-    gap = np.where((ttfo >= 0) & (ttfc >= 0), ttfc - ttfo, -1.0)
-    base.append(gap.reshape(-1, 1))
-    base.append(np.log1p(np.maximum(gap, 0)).reshape(-1, 1))
-    
-    # NEW: Composite signal counts
-    bot_signals = (
-        (X[:,16] > 0.8).astype(np.float32) +
-        (X[:,15] > 0.8).astype(np.float32) +
-        ((X[:,0] >= 0) & (X[:,0] < 60)).astype(np.float32) +
-        ((X[:,6] >= 0) & (X[:,6] < 60)).astype(np.float32) +
-        ((X[:,1] >= 0) & (X[:,1] < 2)).astype(np.float32) +
-        (X[:,5] > 5).astype(np.float32)
-    )
-    base.append(bot_signals.reshape(-1, 1))
-    
-    human_signals = (
-        (X[:,11] > 0.5).astype(np.float32) +
-        (X[:,12] > 0).astype(np.float32) +
-        (X[:,7] > 3600).astype(np.float32) +
-        (X[:,6] >= 300).astype(np.float32) +
-        (X[:,16] < 0.5).astype(np.float32) +
-        (X[:,15] < 0.5).astype(np.float32)
-    )
-    base.append(human_signals.reshape(-1, 1))
-    base.append((human_signals - bot_signals).reshape(-1, 1))
-    
     return np.hstack(base)
 
-def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.17):
+def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.15):
     new_labels = soft_labels.copy()
     amb = np.abs(soft_labels - 0.50) < 0.01
     if amb.sum() == 0: return new_labels
@@ -112,7 +74,7 @@ def train():
     X_tr, X_v, X_te = splits[0], splits[1], splits[2]
     sl_tr, sl_v, sl_te = splits[3], splits[4], splits[5]
     hl_tr, hl_v, hl_te = splits[6], splits[7], splits[8]
-    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.17)
+    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.15)
     X_train = engineer_features(X_tr)
     X_val = engineer_features(X_v)
     X_test = engineer_features(X_te)
@@ -120,15 +82,46 @@ def train():
     print(f"Features: {X_train.shape[1]}")
     
     t0 = time.time()
-    train_data = lgb.Dataset(X_train, label=sl_tr_s)
-    val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
     
-    params = {
+    # Stage 1: Classify into 3 tiers
+    # tier 0 = bot (soft_label < 0.3), tier 1 = uncertain (0.3-0.7), tier 2 = human (>0.7)
+    tier_labels_tr = np.where(sl_tr_s < 0.3, 0, np.where(sl_tr_s > 0.7, 2, 1)).astype(int)
+    
+    tier_train = lgb.Dataset(X_train, label=tier_labels_tr)
+    tier_params = {
+        "objective": "multiclass",
+        "num_class": 3,
+        "metric": "multi_logloss",
+        "num_leaves": 63,
+        "learning_rate": 0.05,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
+        "verbose": -1,
+        "seed": 42,
+        "n_jobs": -1,
+    }
+    tier_model = lgb.train(tier_params, tier_train, num_boost_round=300)
+    
+    # Get tier probabilities for all sets
+    tier_probs_tr = tier_model.predict(X_train)  # shape (n, 3)
+    tier_probs_v = tier_model.predict(X_val)
+    tier_probs_te = tier_model.predict(X_test)
+    
+    # Stage 2: Single regressor with tier probabilities as extra features
+    X_train_s2 = np.hstack([X_train, tier_probs_tr])
+    X_val_s2 = np.hstack([X_val, tier_probs_v])
+    X_test_s2 = np.hstack([X_test, tier_probs_te])
+    
+    reg_train = lgb.Dataset(X_train_s2, label=sl_tr_s)
+    reg_val = lgb.Dataset(X_val_s2, label=sl_v, reference=reg_train)
+    
+    reg_params = {
         "objective": "regression",
         "metric": "rmse",
         "num_leaves": 127,
         "learning_rate": 0.03,
-        "feature_fraction": 0.7,
+        "feature_fraction": 0.8,
         "bagging_fraction": 0.8,
         "bagging_freq": 5,
         "min_child_samples": 10,
@@ -139,22 +132,21 @@ def train():
         "n_jobs": -1,
     }
     
-    model = lgb.train(
-        params, train_data,
+    reg_model = lgb.train(
+        reg_params, reg_train,
         num_boost_round=800,
-        valid_sets=[val_data],
+        valid_sets=[reg_val],
         callbacks=[lgb.log_evaluation(0)],
     )
     train_time = time.time() - t0
     
-    val_preds = np.clip(model.predict(X_val), 0, 1)
-    test_preds = np.clip(model.predict(X_test), 0, 1)
+    val_preds = np.clip(reg_model.predict(X_val_s2), 0, 1)
+    test_preds = np.clip(reg_model.predict(X_test_s2), 0, 1)
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp15_balanced",
-               notes=f"exp10+gap+signals, spread=0.17, ff=0.7, features={X_train.shape[1]}, train_time={train_time:.1f}s")
-    model.save_model(str(Path(__file__).parent / "model.txt"))
+    log_result(val_m, test_m, experiment_name="exp16_two_stage",
+               notes=f"tier classifier + regressor with tier probs, features={X_train_s2.shape[1]}, train_time={train_time:.1f}s")
     return val_m, test_m
 
 if __name__ == "__main__":
