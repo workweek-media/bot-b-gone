@@ -1,3 +1,5 @@
 ml/__pycache__/
 ml/data/gold_standard.csv
 ml/data/soft_labeled.csv
+ml/results.tsv
+ml/run.log
