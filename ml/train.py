@@ -92,25 +92,23 @@ def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.35):
     ttfc = X_a[:, 0].copy(); ttfc[ttfc < 0] = 300
     ttfc_score = np.clip(np.log1p(ttfc) / np.log1p(86400), 0, 1)
     
-    # Weighted combination — hist_rate gets 40% (model's #1 feature)
-    humanness = (0.40 * hist_rate + 
-                 0.12 * ttfo_score + 
-                 0.06 * reopen_score +
-                 0.12 * nhi_click +
-                 0.08 * nhi_open +
-                 0.04 * click_score +
+    # Weighted combination
+    humanness = (0.25 * hist_rate + 
+                 0.15 * ttfo_score + 
+                 0.10 * reopen_score +
+                 0.15 * nhi_click +
+                 0.10 * nhi_open +
+                 0.05 * click_score +
                  0.10 * ic_score +
-                 0.08 * ttfc_score)
+                 0.10 * ttfc_score)
     
-    # Asymmetric spreading: push bot-like samples harder (cleaner signal)
-    bot_spread = spread_amount * 1.3  # more aggressive for bot side
-    human_spread = spread_amount * 0.8  # gentler for human side
-    adjustment = np.where(
-        humanness < 0.5,
-        (humanness - 0.5) * 2 * bot_spread,
-        (humanness - 0.5) * 2 * human_spread
-    )
-    new_labels[amb] = np.clip(0.50 + adjustment, 0.0, 1.0)
+    # Sigmoid spreading: push confident extremes harder, keep middle near 0.50
+    # Sigmoid steepness=6 means: humanness 0.0->label ~0.25, 0.5->label 0.50, 1.0->label ~0.75
+    steepness = 6.0
+    sigmoid_adj = 1.0 / (1.0 + np.exp(-steepness * (humanness - 0.5)))
+    # sigmoid_adj is in [0, 1], centered at 0.5
+    # Scale to spread_amount
+    new_labels[amb] = np.clip(0.50 + (sigmoid_adj - 0.5) * 2 * spread_amount, 0.0, 1.0)
     
     print(f"  Label spread stats: mean={new_labels[amb].mean():.4f} std={new_labels[amb].std():.4f}")
     print(f"  Below 0.3: {(new_labels[amb] < 0.3).sum():,}  Above 0.7: {(new_labels[amb] > 0.7).sum():,}")
