@@ -89,7 +89,7 @@ def confidence_objective(preds, train_data):
         # Penalty gradient: d/dp of -alpha * (p - 0.5)^2
         # = -2 * alpha * (p - 0.5)
         # This pushes predictions AWAY from 0.5
-        alpha = 0.3  # penalty strength
+        alpha = 0.1  # penalty strength (0.3 was too aggressive, hurt MSE)
         penalty_grad = -2 * alpha * (preds - 0.5)
         penalty_grad[~_amb_mask] = 0  # only apply to ambiguous
         grad += penalty_grad
@@ -119,6 +119,8 @@ def train():
     val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
     
     params = {
+        "objective": confidence_objective,
+        "metric": "rmse",
         "num_leaves": 127,
         "learning_rate": 0.03,
         "feature_fraction": 0.8,
@@ -132,11 +134,13 @@ def train():
         "n_jobs": -1,
     }
     
+    train_data_obj = lgb.Dataset(X_train, label=sl_tr_s, free_raw_data=False)
+    val_data_obj = lgb.Dataset(X_val, label=sl_v, reference=train_data_obj, free_raw_data=False)
+    
     model = lgb.train(
-        params, train_data,
+        params, train_data_obj,
         num_boost_round=800,
-        fobj=confidence_objective,
-        valid_sets=[val_data],
+        valid_sets=[val_data_obj],
         callbacks=[lgb.log_evaluation(0)],
     )
     train_time = time.time() - t0
