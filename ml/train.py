@@ -1,10 +1,9 @@
 """
 Bot-B-Gone ML — train.py
-Exp 25: Richer label spreading with 8 signals + spread_amount=0.20.
-Current spreading uses only 3 signals (hist_rate, ttfo, reopen).
-Add: nhi_click_ratio, nhi_open_ratio, click_count, unique_urls, avg_inter_click.
-These are the features the model finds most important — use them to create
-better pseudo-labels for the ambiguous zone.
+Exp 32: Two-model blend — soft-label LightGBM + hard-label LightGBM.
+The soft-label model handles the full spectrum.
+The hard-label model is decisive on the extremes (trained only on gold standard).
+Blend: where hard labels exist, trust the hard model more.
 """
 import sys, time
 import numpy as np
@@ -55,44 +54,28 @@ def engineer_features(X):
     base.append(quantile_bin(11))
     return np.hstack(base)
 
-def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.35):
+def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.42):
     """Enhanced label spreading with 8 behavioral signals."""
     new_labels = soft_labels.copy()
     amb = np.abs(soft_labels - 0.50) < 0.01
     if amb.sum() == 0: return new_labels
     X_a = X_raw[amb]
     
-    # Signal 1: Historical open rate (col 11) — higher = more human
     hist_rate = np.clip(X_a[:, 11], 0, 1)
-    
-    # Signal 2: Time to first open (col 6) — later = more human
     ttfo = X_a[:, 6].copy(); ttfo[ttfo < 0] = 300
     ttfo_score = np.clip(np.log1p(ttfo) / np.log1p(86400), 0, 1)
-    
-    # Signal 3: Reopen count (col 9) — more reopens = more human
     reopen_score = np.clip(X_a[:, 9] / 5.0, 0, 1)
-    
-    # Signal 4: NHI click ratio (col 16) — lower = more human
     nhi_click = 1.0 - np.clip(X_a[:, 16], 0, 1)
-    
-    # Signal 5: NHI open ratio (col 15) — lower = more human
     nhi_open = 1.0 - np.clip(X_a[:, 15], 0, 1)
-    
-    # Signal 6: Click count (col 2) — moderate clicks = human, extreme = bot
     clicks = X_a[:, 2].copy(); clicks[clicks < 0] = 0
     click_score = np.where(clicks == 0, 0.5,
                   np.where(clicks <= 3, 0.8,
                   np.where(clicks <= 10, 0.6, 0.1)))
-    
-    # Signal 7: Avg inter-click seconds (col 1) — slower = more human
     avg_ic = X_a[:, 1].copy(); avg_ic[avg_ic < 0] = 30
     ic_score = np.clip(np.log1p(avg_ic) / np.log1p(300), 0, 1)
-    
-    # Signal 8: Time to first click (col 0) — later = more human
     ttfc = X_a[:, 0].copy(); ttfc[ttfc < 0] = 300
     ttfc_score = np.clip(np.log1p(ttfc) / np.log1p(86400), 0, 1)
     
-    # Weighted combination
     humanness = (0.25 * hist_rate + 
                  0.15 * ttfo_score + 
                  0.10 * reopen_score +
@@ -124,10 +107,14 @@ def train():
     print(f"Features: {X_train.shape[1]}")
     
     t0 = time.time()
+    
+    # ============================================================
+    # MODEL 1: Soft-label regression (full spectrum)
+    # ============================================================
     train_data = lgb.Dataset(X_train, label=sl_tr_s)
     val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
     
-    params = {
+    params_soft = {
         "objective": "regression",
         "metric": "rmse",
         "num_leaves": 127,
@@ -143,22 +130,80 @@ def train():
         "n_jobs": -1,
     }
     
-    model = lgb.train(
-        params, train_data,
+    model_soft = lgb.train(
+        params_soft, train_data,
         num_boost_round=800,
         valid_sets=[val_data],
         callbacks=[lgb.log_evaluation(0)],
     )
+    
+    # ============================================================
+    # MODEL 2: Hard-label classifier (gold standard only)
+    # ============================================================
+    hard_mask_tr = ~np.isnan(hl_tr)
+    X_hard_tr = X_train[hard_mask_tr]
+    hl_hard_tr = hl_tr[hard_mask_tr]
+    
+    hard_mask_v = ~np.isnan(hl_v)
+    X_hard_v = X_val[hard_mask_v]
+    hl_hard_v = hl_v[hard_mask_v]
+    
+    print(f"  Hard-label train: {len(X_hard_tr):,} ({hl_hard_tr.sum():,.0f} human, {len(hl_hard_tr)-hl_hard_tr.sum():,.0f} bot)")
+    
+    train_hard = lgb.Dataset(X_hard_tr, label=hl_hard_tr)
+    val_hard = lgb.Dataset(X_hard_v, label=hl_hard_v, reference=train_hard)
+    
+    params_hard = {
+        "objective": "binary",
+        "metric": "binary_logloss",
+        "num_leaves": 63,
+        "learning_rate": 0.05,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
+        "min_child_samples": 20,
+        "lambda_l1": 1.0,
+        "lambda_l2": 3.0,
+        "verbose": -1,
+        "seed": 42,
+        "n_jobs": -1,
+    }
+    
+    model_hard = lgb.train(
+        params_hard, train_hard,
+        num_boost_round=500,
+        valid_sets=[val_hard],
+        callbacks=[lgb.log_evaluation(0)],
+    )
+    
     train_time = time.time() - t0
     
-    val_preds = np.clip(model.predict(X_val), 0, 1)
-    test_preds = np.clip(model.predict(X_test), 0, 1)
+    # ============================================================
+    # BLEND: Soft model for gray zone, hard model anchors the extremes
+    # ============================================================
+    def blend_predictions(X_feat, hard_labels_subset):
+        soft_preds = np.clip(model_soft.predict(X_feat), 0, 1)
+        hard_preds = np.clip(model_hard.predict(X_feat), 0, 1)
+        
+        # Where we have hard labels, trust the hard model more (70/30)
+        # Where we don't, trust the soft model more (80/20)
+        has_hard = ~np.isnan(hard_labels_subset)
+        blended = np.where(
+            has_hard,
+            0.30 * soft_preds + 0.70 * hard_preds,  # gold standard: trust hard model
+            0.80 * soft_preds + 0.20 * hard_preds    # gray zone: trust soft model
+        )
+        return np.clip(blended, 0, 1)
+    
+    val_preds = blend_predictions(X_val, hl_v)
+    test_preds = blend_predictions(X_test, hl_te)
+    
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp25_rich_spread",
-               notes=f"8-signal spreading, spread=0.20, features={X_train.shape[1]}, train_time={train_time:.1f}s")
-    model.save_model(str(Path(__file__).parent / "model.txt"))
+    log_result(val_m, test_m, experiment_name="exp32_two_model_blend",
+               notes=f"Soft+hard model blend, spread=0.42, features={X_train.shape[1]}, train_time={train_time:.1f}s")
+    model_soft.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
 if __name__ == "__main__":
