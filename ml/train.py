@@ -1,13 +1,13 @@
 """
 Bot-B-Gone ML — train.py
-Exp 18: Iterative self-training (3 rounds) with 80/20 blend.
-Exp 17 was 92.73 with 60/40 blend and 1 round. Try:
-  - 80% model prediction / 20% original label (more aggressive)
-  - 3 rounds of self-training (model refines its own beliefs)
-  - Each round uses the previous round's model to update pseudo-labels
+Exp 19: XGBoost + LightGBM ensemble.
+Average predictions from both models. Different gradient boosting implementations
+may disagree on the gray zone, producing better-spread probabilities.
+Also: increase spread_amount to 0.18 (sweet spot between 0.15 and 0.20).
 """
 import sys, time
 import numpy as np
+import xgboost as xgb
 import lightgbm as lgb
 from pathlib import Path
 
@@ -55,7 +55,7 @@ def engineer_features(X):
     base.append(quantile_bin(11))
     return np.hstack(base)
 
-def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.15):
+def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.18):
     new_labels = soft_labels.copy()
     amb = np.abs(soft_labels - 0.50) < 0.01
     if amb.sum() == 0: return new_labels
@@ -75,7 +75,7 @@ def train():
     X_tr, X_v, X_te = splits[0], splits[1], splits[2]
     sl_tr, sl_v, sl_te = splits[3], splits[4], splits[5]
     hl_tr, hl_v, hl_te = splits[6], splits[7], splits[8]
-    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.15)
+    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.18)
     X_train = engineer_features(X_tr)
     X_val = engineer_features(X_v)
     X_test = engineer_features(X_te)
@@ -83,9 +83,11 @@ def train():
     print(f"Features: {X_train.shape[1]}")
     
     t0 = time.time()
-    amb = np.abs(sl_tr - 0.50) < 0.01
     
-    params = {
+    # Model 1: LightGBM
+    lgb_train = lgb.Dataset(X_train, label=sl_tr_s)
+    lgb_val = lgb.Dataset(X_val, label=sl_v, reference=lgb_train)
+    lgb_params = {
         "objective": "regression",
         "metric": "rmse",
         "num_leaves": 127,
@@ -100,38 +102,54 @@ def train():
         "seed": 42,
         "n_jobs": -1,
     }
+    lgb_model = lgb.train(lgb_params, lgb_train, num_boost_round=800,
+                          valid_sets=[lgb_val], callbacks=[lgb.log_evaluation(0)])
     
-    current_labels = sl_tr_s.copy()
-    blend_ratios = [0.5, 0.7, 0.8]  # increasingly trust the model
-    
-    for round_i, blend in enumerate(blend_ratios):
-        print(f"\n--- Self-training round {round_i+1}, blend={blend} ---")
-        
-        train_data = lgb.Dataset(X_train, label=current_labels)
-        val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
-        
-        n_rounds = 400 if round_i < 2 else 800
-        model = lgb.train(params, train_data, num_boost_round=n_rounds,
-                          valid_sets=[val_data], callbacks=[lgb.log_evaluation(0)])
-        
-        # Update pseudo-labels for ambiguous samples
-        preds = np.clip(model.predict(X_train), 0, 1)
-        current_labels[amb] = blend * preds[amb] + (1 - blend) * sl_tr_s[amb]
-        current_labels = np.clip(current_labels, 0, 1)
-        
-        print(f"  Amb label std: {current_labels[amb].std():.4f}")
-        print(f"  Amb label mean: {current_labels[amb].mean():.4f}")
+    # Model 2: XGBoost with different hyperparams
+    xgb_dtrain = xgb.DMatrix(X_train, label=sl_tr_s)
+    xgb_dval = xgb.DMatrix(X_val, label=sl_v)
+    xgb_dtest = xgb.DMatrix(X_test)
+    xgb_params = {
+        "objective": "reg:squarederror",
+        "eval_metric": "rmse",
+        "max_depth": 8,
+        "learning_rate": 0.03,
+        "subsample": 0.8,
+        "colsample_bytree": 0.7,
+        "reg_alpha": 1.0,
+        "reg_lambda": 3.0,
+        "min_child_weight": 10,
+        "seed": 123,
+        "nthread": -1,
+        "verbosity": 0,
+    }
+    xgb_model = xgb.train(xgb_params, xgb_dtrain, num_boost_round=600,
+                          evals=[(xgb_dval, "val")], verbose_eval=False)
     
     train_time = time.time() - t0
     
-    val_preds = np.clip(model.predict(X_val), 0, 1)
-    test_preds = np.clip(model.predict(X_test), 0, 1)
+    # Ensemble: weighted average (0.6 LightGBM + 0.4 XGBoost)
+    lgb_val_preds = np.clip(lgb_model.predict(X_val), 0, 1)
+    xgb_val_preds = np.clip(xgb_model.predict(xgb_dval), 0, 1)
+    val_preds = 0.6 * lgb_val_preds + 0.4 * xgb_val_preds
+    
+    lgb_test_preds = np.clip(lgb_model.predict(X_test), 0, 1)
+    xgb_test_preds = np.clip(xgb_model.predict(xgb_dtest), 0, 1)
+    test_preds = 0.6 * lgb_test_preds + 0.4 * xgb_test_preds
+    
+    # Check disagreement
+    disagreement = np.abs(lgb_val_preds - xgb_val_preds)
+    print(f"Model disagreement: mean={disagreement.mean():.4f}, max={disagreement.max():.4f}")
+    print(f"  LGB mean={lgb_val_preds.mean():.4f} std={lgb_val_preds.std():.4f}")
+    print(f"  XGB mean={xgb_val_preds.mean():.4f} std={xgb_val_preds.std():.4f}")
+    print(f"  Ensemble mean={val_preds.mean():.4f} std={val_preds.std():.4f}")
+    
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp18_iterative_self_train",
-               notes=f"3-round self-training, blends=[0.5,0.7,0.8], features={X_train.shape[1]}, train_time={train_time:.1f}s")
-    model.save_model(str(Path(__file__).parent / "model.txt"))
+    log_result(val_m, test_m, experiment_name="exp19_ensemble",
+               notes=f"LGB+XGB ensemble 60/40, spread=0.18, features={X_train.shape[1]}, train_time={train_time:.1f}s")
+    lgb_model.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
 if __name__ == "__main__":
