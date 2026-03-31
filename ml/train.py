@@ -138,7 +138,7 @@ def train():
         "objective": "regression",
         "metric": "rmse",
         "num_leaves": 127,
-        "learning_rate": 0.03,
+        "learning_rate": 0.02,
         "feature_fraction": 0.8,
         "bagging_fraction": 0.8,
         "bagging_freq": 5,
