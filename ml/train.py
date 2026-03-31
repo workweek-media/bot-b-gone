@@ -89,7 +89,7 @@ def confidence_objective(preds, train_data):
         # Penalty gradient: d/dp of -alpha * (p - 0.5)^2
         # = -2 * alpha * (p - 0.5)
         # This pushes predictions AWAY from 0.5
-        alpha = 0.1  # penalty strength (0.3 was too aggressive, hurt MSE)
+        alpha = 0.05  # penalty strength (0.3 too aggressive, 0.1 still hurt MSE)
         penalty_grad = -2 * alpha * (preds - 0.5)
         penalty_grad[~_amb_mask] = 0  # only apply to ambiguous
         grad += penalty_grad
