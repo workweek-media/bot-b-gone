@@ -103,8 +103,8 @@ def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.35):
                  0.10 * ttfc_score)
     
     # Asymmetric spreading: push bot-like samples harder (cleaner signal)
-    bot_spread = spread_amount * 1.3  # more aggressive for bot side
-    human_spread = spread_amount * 0.8  # gentler for human side
+    bot_spread = spread_amount * 1.5  # more aggressive for bot side
+    human_spread = spread_amount * 0.7  # gentler for human side
     adjustment = np.where(
         humanness < 0.5,
         (humanness - 0.5) * 2 * bot_spread,
