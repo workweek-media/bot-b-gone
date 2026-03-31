@@ -28,24 +28,36 @@ Follow Karpathy's core principle: **complexify only one at a time.**
 
 ## Current Best: 94.00 / 100 (Experiment 40)
 
-| Metric | Value |
-|---|---|
-| Composite | **94.00** |
-| K-S | 99.81 |
-| MSE | 0.001716 |
-| ECE | 0.025633 |
-| Spread | 84.10 |
+| Metric | Value | Component Score | Max Possible |
+|---|---|---|---|
+| Composite | **94.00** | — | 100.00 |
+| K-S | 99.78 | 29.93 | 30.00 |
+| MSE | 0.001720 | 29.79 | 30.00 |
+| ECE | 0.025634 | 17.44 | 20.00 |
+| Spread | 84.18 | 16.84 | 20.00 |
 
-## The Problem We're Solving
+**Headroom Analysis:**
+- K-S: 0.07 points available (essentially maxed)
+- MSE: 0.21 points available (essentially maxed)
+- ECE: 2.56 points available (moderate opportunity)
+- Spread: 3.16 points available (**largest opportunity**)
+- **Total headroom: ~6 points. Target: capture 1-3 of them.**
 
-The previous binary model (trained on only the extremes) achieved K-S = 100 but collapsed to binary predictions on the uncertain middle — 97.6% scored as "definitely human" and 2.4% as "definitely bot" with nothing in between. That's useless for the 7.4M events in the gray zone.
+**Prediction Distribution at Plateau:**
+```
+0.0-0.1:  5.0%  ██
+0.1-0.2:  4.5%  ██
+0.2-0.3:  3.8%  █
+0.3-0.4:  2.4%  █
+0.4-0.5: 32.7%  ████████████████   <-- THE PROBLEM: model hedges here
+0.5-0.6: 18.5%  █████████
+0.6-0.7: 16.9%  ████████
+0.7-0.8:  9.7%  ████
+0.8-0.9:  5.0%  ██
+0.9-1.0:  1.6%
+```
 
-We now train on **soft labels** derived from our rule-based system, which assigns continuous confidence scores:
-- 0.00 = definitive bot (machinegun clicker / honeypot)
-- 0.25 = medium-confidence bot (single bot rule triggered)
-- 0.50 = ambiguous (no rules triggered)
-- 0.70 = weak human signal (one human rule)
-- 1.00 = definitive human (verified clicker)
+The model is hedging on the 54% ambiguous events by predicting ~0.45-0.55. To improve spread without hurting MSE, we need the model to be **confidently right** — pushing predictions away from 0.50 only when it has genuine signal to do so.
 
 ## Files
 
@@ -73,32 +85,36 @@ Gold standard: 179K definitive bots, 554K definitive humans.
 
 ## Raw Features Available (19 columns)
 
-### Click Timing
-- `time_to_first_click_sec`: Seconds from send to first click (-1 if no click)
-- `avg_inter_click_sec`: Average seconds between consecutive clicks (-1 if <2 clicks)
-- `click_span_sec`: Seconds between first and last click (-1 if <2 clicks)
+### Click Timing (indices 0-2)
+- `[0] time_to_first_click_sec`: Seconds from send to first click (-1 if no click)
+- `[1] avg_inter_click_sec`: Average seconds between consecutive clicks (-1 if <2 clicks)
+- `[2] click_span_sec`: Seconds between first and last click (-1 if <2 clicks)
 
-### Click Volume
-- `raw_total_clicks`: Total click events
-- `nhi_clicks`: Non-human-interaction clicks (Sailthru's own bot flag)
-- `unique_urls_clicked`: Distinct URLs clicked
+### Click Volume (indices 3-5)
+- `[3] raw_total_clicks`: Total click events
+- `[4] nhi_clicks`: Non-human-interaction clicks (Sailthru's own bot flag)
+- `[5] unique_urls_clicked`: Distinct URLs clicked
 
-### Open Timing
-- `time_to_first_open_sec`: Seconds from send to first open (-1 if no open)
-- `open_span_sec`: Seconds between first and last open (-1 if <2 opens)
-- `first_nhi_open_sec`: Seconds to first NHI-flagged open (-1 if none)
+### Open Timing (indices 6-8)
+- `[6] time_to_first_open_sec`: Seconds from send to first open (-1 if no open)
+- `[7] open_span_sec`: Seconds between first and last open (-1 if <2 opens)
+- `[8] first_nhi_open_sec`: Seconds to first NHI-flagged open (-1 if none)
 
-### Open Volume
-- `raw_total_opens`: Total open events
-- `nhi_opens`: Non-human-interaction opens
+### Open Volume (indices 9-10)
+- `[9] raw_total_opens`: Total open events
+- `[10] nhi_opens`: Non-human-interaction opens
 
-### User History
-- `user_historical_open_rate`: This user's lifetime open rate (0-1)
-- `user_lifetime_verified_opens`: Total verified opens across all sends
+### User History (indices 11-12)
+- `[11] user_historical_open_rate`: This user's lifetime open rate (0-1)
+- `[12] user_lifetime_verified_opens`: Total verified opens across all sends
 
-### Derived Ratios
-- `clicks_per_second`, `url_diversity_ratio`, `nhi_open_ratio`, `nhi_click_ratio`
-- `has_any_clicks`, `has_any_opens`
+### Derived Ratios (indices 13-18)
+- `[13] clicks_per_second`
+- `[14] url_diversity_ratio`
+- `[15] nhi_open_ratio`
+- `[16] nhi_click_ratio`
+- `[17] has_any_clicks`
+- `[18] has_any_opens`
 
 ## Key Behavioral Insights
 
@@ -154,21 +170,105 @@ To break past 94.00, you need to find changes that improve spread WITHOUT hurtin
 2. Better label spreading that is more accurate (not just wider)
 3. A fundamentally different approach to the 54% ambiguous events
 
-## Unexplored Directions (Ranked by Expected Impact)
+## NEXT WAVE: Experiments 46-60 (Ranked by Expected Impact)
 
-1. **Cross-send features**: Subscriber behavior across multiple sends (repeat offender score). Requires data pipeline change.
-2. **Domain-type feature**: Corporate vs freemail email domain. Omeda flagged this as important. Can be derived from existing data.
-3. **Neural network (MLP)**: Small feedforward net might capture non-linear interactions trees miss. Needs careful regularization.
-4. **Quantile regression**: Train multiple models at different quantiles, ensemble the predictions.
-5. **Feature ablation study**: Systematically remove features one at a time to find which ones are noise.
-6. **Time-based features**: Day of week, hour of day when the event occurred. Bots may cluster at certain times.
-7. **PU-learning**: Positive-Unlabeled learning framework that treats the 54% ambiguous as unlabeled instead of 0.50.
+These are the highest-priority experiments to run next. Execute them IN ORDER. Each builds on the previous if successful.
+
+### Tier 1: Feature Engineering (Highest Expected Impact)
+
+**Experiment 46: Feature Ablation Study**
+- **Hypothesis:** Some of the 43 engineered features are noise. Removing them will let the model focus on real signal, improving calibration and potentially spread.
+- **Method:** Run the current model, then systematically remove features one at a time. Track which removals improve or don't hurt the composite. Start with the quantile bins and threshold flags.
+- **What to change:** In `engineer_features()`, comment out one feature group at a time (e.g., all quantile bins, all threshold flags, all log transforms). Run after each removal.
+- **Expected outcome:** Identify 5-10 features that can be removed. Small composite improvement from reduced noise.
+- **Success criteria:** Composite >= 94.00 with fewer features.
+
+**Experiment 47: Ratio of NHI-to-Total as Continuous Feature**
+- **Hypothesis:** The model currently has `nhi_click_ratio` and `nhi_open_ratio` as raw features plus threshold flags (>0.95, >0.75, <0.10). But it doesn't have the *interaction* between NHI ratios and volume. A subscriber with nhi_click_ratio=0.95 and 1 click is very different from one with nhi_click_ratio=0.95 and 20 clicks.
+- **Method:** Add `nhi_click_ratio * raw_total_clicks` and `nhi_open_ratio * raw_total_opens` as new features.
+- **What to change:** Add two lines to `engineer_features()`.
+- **Expected outcome:** Better separation in the ambiguous zone where NHI ratio alone is ambiguous.
+
+**Experiment 48: Missing-Value Indicator Features**
+- **Hypothesis:** The -1 sentinel value for missing data (no clicks, no opens) is being treated as a numeric value by the tree. Explicit binary indicators for "has no click data" and "has no open data" may help the model handle these cases differently.
+- **Method:** Add `(X[:, 0] == -1)` and `(X[:, 6] == -1)` as binary features.
+- **What to change:** Add two lines to `engineer_features()`.
+- **Expected outcome:** Cleaner splits in the tree for missing-data cases.
+
+**Experiment 49: Open-to-Click Time Gap**
+- **Hypothesis:** The time between first open and first click is a strong human signal (humans open, read, then click). Bots often click before or simultaneously with the open. This feature is NOT in the current set.
+- **Method:** Add `time_to_first_click_sec - time_to_first_open_sec` (only when both > 0) as a new feature.
+- **What to change:** Add one computed feature to `engineer_features()`.
+- **Expected outcome:** New signal axis for the ambiguous zone.
+
+**Experiment 50: Velocity Consistency Score**
+- **Hypothesis:** Bots have extremely consistent inter-click timing (std dev near 0). Humans have variable timing. We don't currently capture this — we only have the average.
+- **Method:** We can't compute std dev from the current features, but we CAN approximate it: if `click_span_sec > 0` and `raw_total_clicks > 2`, then `click_span_sec / raw_total_clicks` vs `avg_inter_click_sec` — if they're very close, timing is regular (bot-like).
+- **What to change:** Add `abs(click_span_sec / max(raw_total_clicks - 1, 1) - avg_inter_click_sec)` as a feature.
+- **Expected outcome:** Captures timing regularity without needing raw event data.
+
+### Tier 2: Label Strategy (Medium Expected Impact)
+
+**Experiment 51: PU-Learning Framework**
+- **Hypothesis:** The 54% ambiguous events are NOT "0.50 probability human." They are UNLABELED. Treating them as 0.50 forces the model to predict 0.50 for genuinely uncertain cases AND for cases where the model could be more confident. PU-learning (Positive-Unlabeled) treats these as unlabeled and learns from the labeled extremes.
+- **Method:** Instead of soft labels for the ambiguous zone, use a PU-learning loss that only penalizes the model on labeled examples and treats unlabeled examples as having unknown labels.
+- **What to change:** Replace the LightGBM regression objective with a custom PU-learning objective function. The simplest version: set sample_weight=0 for ambiguous samples during training, then let the model extrapolate.
+- **Expected outcome:** Model will predict more extreme values for the ambiguous zone based on feature similarity to labeled examples. Spread should improve significantly.
+- **Risk:** MSE will increase because we're no longer targeting 0.50 for ambiguous samples. Need to check if spread gain > MSE loss.
+
+**Experiment 52: Confidence-Weighted Labels**
+- **Hypothesis:** Not all 0.50 labels are equally uncertain. Some ambiguous events have features that are CLOSE to triggering a rule (e.g., time_to_first_click = 62 seconds, just barely missing the 60s bot threshold). These should have labels closer to the rule they almost triggered.
+- **Method:** For ambiguous samples, compute distance to nearest rule threshold and adjust label proportionally. Events that almost triggered a bot rule get labels < 0.50; events that almost triggered a human rule get labels > 0.50.
+- **What to change:** New label adjustment function in `train.py` that runs AFTER `spread_ambiguous_labels()`.
+- **Expected outcome:** More informative labels for the ambiguous zone, especially for near-threshold cases.
+
+**Experiment 53: Two-Phase Training**
+- **Hypothesis:** Train the model in two phases: (1) train on ONLY the labeled extremes (hard_label != NULL) to learn the definitive patterns, then (2) use that model's predictions as pseudo-labels for the ambiguous zone and retrain on everything.
+- **Method:** First train on ~730K labeled samples. Use predictions on the 2.36M ambiguous samples as new soft labels. Retrain on all 4.37M with these improved labels.
+- **What to change:** Add a two-phase training loop in `train()`.
+- **Expected outcome:** Better pseudo-labels than the rule-based 0.50, because the model can use all 19 features to estimate probability.
+- **Risk:** This is similar to self-training (exp17-18) which didn't work. The key difference: start from hard labels only, not soft labels.
+
+### Tier 3: Architecture (Lower Expected Impact, Higher Risk)
+
+**Experiment 54: Focal Loss for Ambiguous Samples**
+- **Hypothesis:** Standard MSE loss treats all prediction errors equally. Focal loss down-weights easy examples (the definitive bots/humans the model already gets right) and up-weights hard examples (the ambiguous zone). This should force the model to spend more capacity on the uncertain middle.
+- **Method:** Implement focal loss as a custom LightGBM objective.
+- **What to change:** Add custom objective function to `train()`.
+- **Expected outcome:** Better calibration in the ambiguous zone.
+
+**Experiment 55: Quantile Regression Ensemble**
+- **Hypothesis:** Train 3 models at quantiles 0.25, 0.50, 0.75. The median model gives the point estimate; the spread between 0.25 and 0.75 quantiles gives a confidence interval. Use the confidence interval to adjust predictions: when the model is confident (narrow interval), push predictions further from 0.50.
+- **Method:** Train 3 LightGBM models with `objective=quantile` at different `alpha` values. Combine predictions.
+- **What to change:** Multi-model training in `train()`.
+- **Expected outcome:** More calibrated uncertainty estimates that improve spread.
+
+**Experiment 56: Small Neural Network (MLP)**
+- **Hypothesis:** Tree-based models make axis-aligned splits. A small MLP can learn smooth, non-linear decision boundaries that may capture interactions trees miss.
+- **Method:** 3-layer MLP (64-32-16) with dropout, trained on the same features. Use PyTorch or sklearn MLPRegressor.
+- **What to change:** Replace LightGBM with MLP in `train()`.
+- **Expected outcome:** Different prediction surface that may complement trees.
+- **Risk:** Neural nets are harder to tune and may overfit on 4.37M rows without careful regularization.
+
+### Tier 4: Ensemble & Post-Processing
+
+**Experiment 57: Temperature Scaling**
+- **Hypothesis:** The model's raw predictions may be well-ordered but poorly calibrated. Temperature scaling (dividing logits by a learned temperature parameter) can improve calibration without changing the ranking.
+- **Method:** After training, learn a single temperature parameter T on the validation set that minimizes ECE. Apply `pred = sigmoid(logit(pred) / T)` to all predictions.
+- **What to change:** Add post-processing step after `model.predict()`.
+- **Expected outcome:** Improved ECE with no change to K-S.
+
+**Experiment 58: Platt Scaling (Careful)**
+- **Hypothesis:** Similar to temperature scaling but with two parameters (a, b) in `sigmoid(a * logit(pred) + b)`. More flexible than temperature scaling.
+- **Method:** Fit a, b on validation set to minimize NLL. Apply to test set.
+- **What to change:** Add post-processing step.
+- **Expected outcome:** Better calibration. Risk: isotonic calibration destroyed spread (exp tried), but Platt scaling is much gentler.
 
 ## How to Run
 
 ```bash
-cd /path/to/bot-b-gone/ml
-python3 train.py > run.log 2>&1
+cd ~/Documents/bot-b-gone-ml
+python3 train.py 2>&1 | tee run.log
 grep "COMPOSITE SCORE\|Validation Composite\|Test Composite" run.log
 ```
 
@@ -176,14 +276,22 @@ grep "COMPOSITE SCORE\|Validation Composite\|Test Composite" run.log
 
 LOOP FOREVER:
 
-1. Read the current composite score and experiment history
-2. Form ONE hypothesis about what will improve the score
-3. Make ONE change to `train.py` to test it
-4. Git commit with a descriptive message: `git add ml/train.py && git commit -m "expN: ONE change - description"`
-5. Run: `python3 train.py > run.log 2>&1`
-6. Read results: `grep "Composite\|composite" run.log`
-7. Analyze: WHY did it move? What metric changed? Does the histogram look better?
-8. If composite improved → keep commit, compound next change on top
-9. If composite is equal or worse → `git checkout HEAD~1 -- ml/train.py` to revert
-10. Log to results.tsv
-11. NEVER STOP — run until the human interrupts you
+1. Read the current composite score and experiment history in `results.tsv`
+2. Read this file (`program.md`) for the next experiment to try
+3. Form ONE hypothesis about what will improve the score
+4. Make ONE change to `train.py` to test it
+5. Git commit with a descriptive message: `git add train.py && git commit -m "expN: ONE change - description"`
+6. Run: `python3 train.py 2>&1 | tee run.log`
+7. Read results: `grep "Composite\|composite" run.log`
+8. Analyze: WHY did it move? What metric changed? Does the histogram look better?
+9. If composite improved → keep commit, compound next change on top
+10. If composite is equal or worse → `git checkout HEAD~1 -- train.py` to revert
+11. Log to results.tsv (automatic via prepare.py)
+12. NEVER STOP — run until the human interrupts you
+
+## Important Constraints
+
+- **Memory:** The dataset is 339MB / 4.37M rows. Ensure your changes don't cause OOM. If you need to subsample for testing, use the first 1M rows, but always validate on the full dataset.
+- **Speed:** Each experiment should complete in < 5 minutes. If it takes longer, something is wrong.
+- **Reproducibility:** Always use `seed=42` for random operations. The data split is deterministic.
+- **Git discipline:** Every experiment gets its own commit. Reverted experiments get `git checkout HEAD~1 -- train.py`.

@@ -1,0 +1,31 @@
+# Bot-B-Gone ML — Cursor Agent Rules
+
+You are an ML research agent running Karpathy's autoresearch loop on a bot detection model.
+
+## Your Mission
+Maximize the composite score in `prepare.py` by modifying ONLY `train.py`.
+
+## Rules
+1. **ONE change at a time.** Never modify more than one concept per experiment.
+2. **Read `program.md` first** — it has the full experiment history and next experiments to try.
+3. **Read `results.tsv`** — it has every experiment's score. Don't repeat failed experiments.
+4. **NEVER modify `prepare.py`** — it's the immutable evaluation harness.
+5. **NEVER modify `data/soft_labeled.csv`** — it's the immutable training data.
+6. **Git commit every experiment** — `git add train.py && git commit -m "expN: description"`
+7. **Revert failures** — `git checkout HEAD~1 -- train.py` if composite didn't improve.
+8. **Log analysis** — After each run, explain WHY the score moved before trying the next thing.
+
+## Current State
+- Best composite: 94.00/100
+- Bottleneck: Spread (84.18/100) — model hedges on 54% ambiguous events
+- Hyperparameters are SATURATED — don't tune learning_rate, min_child_samples, etc.
+- Next experiments: Start at Experiment 46 (feature ablation) in program.md
+
+## How to Run
+```bash
+python3 train.py 2>&1 | tee run.log
+grep "COMPOSITE SCORE\|Validation Composite\|Test Composite" run.log
+```
+
+## Key Insight
+The only path past 94.00 is better FEATURES or better LABELS. Not hyperparameters.
