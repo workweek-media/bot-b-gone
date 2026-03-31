@@ -55,7 +55,7 @@ def engineer_features(X):
     base.append(quantile_bin(11))
     return np.hstack(base)
 
-def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.20):
+def spread_ambiguous_labels(X_raw, soft_labels, spread_amount=0.35):
     """Enhanced label spreading with 8 behavioral signals."""
     new_labels = soft_labels.copy()
     amb = np.abs(soft_labels - 0.50) < 0.01
