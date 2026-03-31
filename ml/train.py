@@ -1,9 +1,11 @@
 """
 Bot-B-Gone ML — train.py
-Exp 16: Two-stage model.
-Stage 1: LightGBM classifier into 3 tiers (bot/uncertain/human)
-Stage 2: Separate regressors for each tier to produce fine-grained probabilities.
-This should break the 0.50 cluster by giving the uncertain tier its own model.
+Exp 17: Self-training (bootstrapping) to break the 0.50 cluster.
+1. Train initial model on spread labels (exp 10 approach)
+2. Use initial model to predict on training set
+3. For ambiguous labels (0.50), replace with model's own prediction (pseudo-labels)
+4. Retrain on pseudo-labels
+This forces the model to commit to its own beliefs about the gray zone.
 """
 import sys, time
 import numpy as np
@@ -83,40 +85,7 @@ def train():
     
     t0 = time.time()
     
-    # Stage 1: Classify into 3 tiers
-    # tier 0 = bot (soft_label < 0.3), tier 1 = uncertain (0.3-0.7), tier 2 = human (>0.7)
-    tier_labels_tr = np.where(sl_tr_s < 0.3, 0, np.where(sl_tr_s > 0.7, 2, 1)).astype(int)
-    
-    tier_train = lgb.Dataset(X_train, label=tier_labels_tr)
-    tier_params = {
-        "objective": "multiclass",
-        "num_class": 3,
-        "metric": "multi_logloss",
-        "num_leaves": 63,
-        "learning_rate": 0.05,
-        "feature_fraction": 0.8,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 5,
-        "verbose": -1,
-        "seed": 42,
-        "n_jobs": -1,
-    }
-    tier_model = lgb.train(tier_params, tier_train, num_boost_round=300)
-    
-    # Get tier probabilities for all sets
-    tier_probs_tr = tier_model.predict(X_train)  # shape (n, 3)
-    tier_probs_v = tier_model.predict(X_val)
-    tier_probs_te = tier_model.predict(X_test)
-    
-    # Stage 2: Single regressor with tier probabilities as extra features
-    X_train_s2 = np.hstack([X_train, tier_probs_tr])
-    X_val_s2 = np.hstack([X_val, tier_probs_v])
-    X_test_s2 = np.hstack([X_test, tier_probs_te])
-    
-    reg_train = lgb.Dataset(X_train_s2, label=sl_tr_s)
-    reg_val = lgb.Dataset(X_val_s2, label=sl_v, reference=reg_train)
-    
-    reg_params = {
+    params = {
         "objective": "regression",
         "metric": "rmse",
         "num_leaves": 127,
@@ -132,21 +101,41 @@ def train():
         "n_jobs": -1,
     }
     
-    reg_model = lgb.train(
-        reg_params, reg_train,
-        num_boost_round=800,
-        valid_sets=[reg_val],
-        callbacks=[lgb.log_evaluation(0)],
-    )
+    # Stage 1: Train initial model
+    train_data = lgb.Dataset(X_train, label=sl_tr_s)
+    val_data = lgb.Dataset(X_val, label=sl_v, reference=train_data)
+    model1 = lgb.train(params, train_data, num_boost_round=400,
+                        valid_sets=[val_data], callbacks=[lgb.log_evaluation(0)])
+    
+    # Generate pseudo-labels for ambiguous samples
+    initial_preds = np.clip(model1.predict(X_train), 0, 1)
+    amb = np.abs(sl_tr - 0.50) < 0.01  # original ambiguous labels
+    
+    # Blend: 60% model prediction, 40% spread label (soft transition)
+    pseudo_labels = sl_tr_s.copy()
+    pseudo_labels[amb] = 0.6 * initial_preds[amb] + 0.4 * sl_tr_s[amb]
+    pseudo_labels = np.clip(pseudo_labels, 0, 1)
+    
+    print(f"Pseudo-labeled {amb.sum():,} ambiguous samples")
+    print(f"  Original 0.50 cluster: {(np.abs(sl_tr - 0.50) < 0.01).sum():,}")
+    print(f"  New label std in amb: {pseudo_labels[amb].std():.4f}")
+    
+    # Stage 2: Retrain on pseudo-labels
+    train_data2 = lgb.Dataset(X_train, label=pseudo_labels)
+    val_data2 = lgb.Dataset(X_val, label=sl_v, reference=train_data2)
+    model2 = lgb.train(params, train_data2, num_boost_round=800,
+                        valid_sets=[val_data2], callbacks=[lgb.log_evaluation(0)])
+    
     train_time = time.time() - t0
     
-    val_preds = np.clip(reg_model.predict(X_val_s2), 0, 1)
-    test_preds = np.clip(reg_model.predict(X_test_s2), 0, 1)
+    val_preds = np.clip(model2.predict(X_val), 0, 1)
+    test_preds = np.clip(model2.predict(X_test), 0, 1)
     val_m = evaluate(sl_v, hl_v, val_preds, dataset_name="validation")
     test_m = evaluate(sl_te, hl_te, test_preds, dataset_name="test")
     print_evaluation(val_m); print_evaluation(test_m)
-    log_result(val_m, test_m, experiment_name="exp16_two_stage",
-               notes=f"tier classifier + regressor with tier probs, features={X_train_s2.shape[1]}, train_time={train_time:.1f}s")
+    log_result(val_m, test_m, experiment_name="exp17_self_training",
+               notes=f"self-training pseudo-labels, 60/40 blend, features={X_train.shape[1]}, train_time={train_time:.1f}s")
+    model2.save_model(str(Path(__file__).parent / "model.txt"))
     return val_m, test_m
 
 if __name__ == "__main__":
