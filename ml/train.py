@@ -116,7 +116,7 @@ def train():
     X_tr, X_v, X_te = splits[0], splits[1], splits[2]
     sl_tr, sl_v, sl_te = splits[3], splits[4], splits[5]
     hl_tr, hl_v, hl_te = splits[6], splits[7], splits[8]
-    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.20)
+    sl_tr_s = spread_ambiguous_labels(X_tr, sl_tr, spread_amount=0.35)
     X_train = engineer_features(X_tr)
     X_val = engineer_features(X_v)
     X_test = engineer_features(X_te)
