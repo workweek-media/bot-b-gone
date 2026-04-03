@@ -1,0 +1,38 @@
+{
+  "_description": "Recommended thresholds for V2 bot detection, tuned via 63 automated experiments against ground truth.",
+
+  "open_cascade": {
+    "mpp_devices": ["Apple Mail"],
+    "human_peak_hours": [7, 8, 9, 10, 11, 12, 17, 18, 19, 20],
+    "scanner_instant_sec": 10,
+    "open_ml_bot_threshold": 0.5,
+    "notes": "Peak hours are for US-centric B2B newsletters. Adjust for your audience timezone."
+  },
+
+  "click_cascade": {
+    "instant_click_sec": 5.0,
+    "machinegun_interval_sec": 2.0,
+    "dead_zone_sec": 300,
+    "dead_zone_interval_sec": 10,
+    "late_click_sec": 3600,
+    "social_bot_fraction": 0.80,
+    "selective_click_rate": 0.10,
+    "uncertain_combined_threshold": 0.40,
+    "grid_weight_normal": 0.50,
+    "grid_weight_v7_bot": 0.70
+  },
+
+  "bot_devices": ["Internet Explorer", "Other", "Windows Tablet"],
+
+  "social_domains": [
+    "linkedin.com", "twitter.com", "x.com", "instagram.com",
+    "youtube.com", "facebook.com", "tiktok.com"
+  ],
+
+  "url_classification": {
+    "social": "Any URL containing a social domain",
+    "unsub": "URLs containing 'unsubscribe', 'manage', or 'preferences'",
+    "house_ad": "URLs to your own brand/discovery pages (customize for your domain)",
+    "content": "Everything else — editorial links, sponsor links, article links"
+  }
+}
